@@ -87,7 +87,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
     
-    # 均線計算 (用於趨勢加分)
+    # 均線計算
     ma5_all = c.rolling(5).mean()
     ma10_all = c.rolling(10).mean()
     ma20_all = c.rolling(20).mean()
@@ -98,12 +98,10 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     high_20d = h.iloc[-20:-1].max()
     is_pullback_stop = (high_20d > c.iloc[-1] * 1.05) and (c.iloc[-1] > ma5) and (c.iloc[-1] > high_20d * 0.90)
     
-    # 修改量能突發判定 (配合平滑化邏輯)
     v_avg5 = v.rolling(5).mean().iloc[-2]
     is_vol_burst = v.iloc[-1] > (v_avg5 * (1.2 if mode == "盤中即時偵測" else 1.5))
     is_breakthrough = (c.iloc[-1] > ma20) and (c.iloc[-1] >= h.iloc[-20:].max())
 
-    # --- 突襲預測偵測 ---
     avg_v_20 = v.rolling(20).mean().iloc[-1]
     is_volume_dry = v.iloc[-1] < (avg_v_20 * 0.5) 
     is_price_tight = (h.iloc[-5:].max() - l.iloc[-5:].min()) / c.iloc[-1] < 0.04 
@@ -124,27 +122,16 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     
     final_pattern = f"{pattern} {theme_label}" if theme_label else pattern
     
-    # ====================== [優化後的 w_score 計算邏輯] ======================
-    # 1. 分母平滑化：量比改用 (5日均量 + 21日均量) / 2 做為基準，避免連漲後基數過高
+    # 吸籌力優化計算
     v_smooth_avg = (v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2
     v_ratio = float(v.iloc[-1]) / v_smooth_avg
-    
-    # 2. 趨勢加分 (Trend Bonus)：多頭排列 MA5 > MA10 > MA20，保底 +10 分
     trend_bonus = 10.0 if (ma5 > ma10 > ma20) else 0.0
-    
-    # 3. 基礎吸籌力計算
     close_pos_score = ((float(c.iloc[-1])-float(l.iloc[-1]))/(float(h.iloc[-1])-float(l.iloc[-1]))*15.0 if (float(h.iloc[-1])-float(l.iloc[-1]))>0 else 7.0)
     w_raw = (v_ratio * 15.0) + close_pos_score + trend_bonus
-    
-    # 4. 高價股補償 (Price Factor)：股價 > 2000 元加權 20%
     price_factor = 1.2 if c.iloc[-1] > 2000 else 1.0
-    
     w_score = round(w_raw * price_factor, 1)
-    # ======================================================================
     
     ret_5d, ret_15d = round(((c.iloc[-1]/c.iloc[-6])-1)*100, 2), round(((c.iloc[-1]/c.iloc[-16])-1)*100, 2)
-    
-    # 數值加固：確保加法對象皆為純數值
     total_score = round(float(p_score) + float(w_score) + (float(ret_5d) * 2.5) + float(extra_boost) + float(growth_boost) + float(theme_boost), 1)
     
     risk = "⚪ 一般波動"
@@ -165,7 +152,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v8.5.9", layout="wide")
-st.title("🏹 供應鏈主力大戶決策戰情室 v8.5.9 (潛力突襲偵測版)")
+st.title("🏹 供應鏈主力大戶決策戰情室 v8.5.9 (介面優化版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -217,24 +204,30 @@ if st.button("🚀 啟動 V8.5.9 全面掃描"):
                     if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
                     if w_score < min_whale and "潛力突襲" not in risk: continue
                 results.append({
-                    "名稱": name_map.get(code, code), "現價": price, "去年(曆年)區間": ly_range, "合理區間(20-25)": fair_range, 
+                    "名稱": name_map.get(code, code), 
+                    "🔗 連結": f"https://tw.stock.yahoo.com/quote/{code}", 
+                    "代號": code,
+                    "現價": price, "去年(曆年)區間": ly_range, "合理區間(20-25)": fair_range, 
                     "評價": status, "前一年 EPS": t_eps, "預估 EPS": f_eps, "風險": risk, "形態": pattern, 
-                    "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total,
-                    "連結": f"https://tw.stock.yahoo.com/quote/{code}"
+                    "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total
                 })
             except: continue
 
 if results:
     df_res = pd.DataFrame(results)
+    # 重新排列欄位順序，讓連結緊跟在名稱後面
+    cols = ["名稱", "🔗 連結", "現價", "去年(曆年)區間", "合理區間(20-25)", "評價", "前一年 EPS", "預估 EPS", "風險", "形態", "吸籌力 🐋", "5日%", "15日%", "波段評分"]
+    df_res = df_res[cols]
+    
     tabs = st.tabs(["🟢 優先關注", "🟣 潛力突襲", "🔵 準備續攻", "🟡 築底觀察", "⚪ 一般波動", "🔴 警戒避開", "⭐ 全部標的"])
     for i, cat in enumerate(["🟢 優先關注", "🟣 潛力突襲", "🔵 準備續攻", "🟡 築底觀察", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
         with tabs[i]:
             display_df = df_res.sort_values("波段評分", ascending=False) if cat == "全部" else df_res[df_res["風險"] == cat].sort_values("波段評分", ascending=False)
             if not display_df.empty:
                 st.dataframe(display_df, column_config={
+                    "🔗 連結": st.column_config.LinkColumn("代號", display_text=r"(\d+)"), # 用正則表達式或預存的代號顯示
                     "現價": st.column_config.NumberColumn(format="%.2f"), 
                     "波段評分": st.column_config.ProgressColumn(min_value=0, max_value=400), 
-                    "連結": st.column_config.LinkColumn("圖表")
                 }, use_container_width=True, hide_index=True)
             else: st.write(f"目前無 {cat} 標的。")
 else: st.write("請啟動掃描。")
