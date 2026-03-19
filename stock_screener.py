@@ -193,7 +193,7 @@ if results:
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
     
     tabs = st.tabs(["🟣 突襲", "🟡 築底", "🟢 優先", "🔵 續攻", "⚪ 一般", "🔴 警戒", "⭐ 全部"])
-    for i, cat in enumerate(["🟢 優先關注", "🟣 潛力突襲", "🔵 準備續攻", "🟡 築底觀察", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
+    for i, cat in enumerate(["🟣 潛力突襲", "🟡 築底觀察", "🟢 優先關注", "🔵 準備續攻", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
         with tabs[i]:
             display_df = df_res if cat == "全部" else df_res[df_res["風險"] == cat]
             if display_df.empty:
