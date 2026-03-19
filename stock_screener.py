@@ -148,10 +148,10 @@ with st.sidebar:
     st.divider()
     st.header("💡 15% 波段實戰準則")
     st.markdown("""
-    - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小，風險低。
     - <font color='#6f42c1'>**🟣 紫燈 (潛力突襲)**</font>: 成交量極縮+橫盤，變盤前夕。
-    - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回檔止跌、準備二次發動。
     - <font color='#ffc107'>**🟡 黃燈 (築底觀察)**</font>: 15日漲幅近0%，剛現底部吞噬。
+    - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小，風險低。
+    - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回檔止跌、準備二次發動。
     - <font color='#dc3545'>**🔴 紅燈 (警戒避開)**</font>: 15日漲幅過高(>30%)，防追高。
     - <font color='#17a2b8'>**🔥 (動能突破)**</font> / <font color='#6f42c1'>**💰 (成長加分)**</font>
     - <font color='#ff4b4b'>**🎯 (價值區間)**</font> / <font color='#ffffff'>**💤 (窒息量能)**</font>
@@ -191,8 +191,8 @@ if results:
     # 分配勳章
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
     
-    tabs = st.tabs(["🟢 優先", "🟣 突襲", "🔵 續攻", "🟡 築底", "⚪ 一般", "🔴 警戒", "⭐ 全部"])
-    for i, cat in enumerate(["🟢 優先關注", "🟣 潛力突襲", "🔵 準備續攻", "🟡 築底觀察", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
+    tabs = st.tabs(["🟣 突襲", "🟡 築底", "🟢 優先", "🔵 續攻", "⚪ 一般", "🔴 警戒", "⭐ 全部"])
+    for i, cat in enumerate(["🟣 潛力突襲", "🟡 築底加碼", "🟢 優先重倉", "🔵 準備續攻", "⚪ 波動觀望", "🔴 警戒收割", "全部"]):
         with tabs[i]:
             display_df = df_res if cat == "全部" else df_res[df_res["風險"] == cat]
             if display_df.empty:
