@@ -10,11 +10,10 @@ from datetime import datetime
 def get_reliable_name_map():
     backup_names = {
         "2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "6669": "緯穎",
-        "3017": "奇鋐", "3324": "雙鴻", "3653": "健策", "2421": "建準", "2376": "技嘉",
+        "3017": "奇亮", "3324": "雙鴻", "3653": "健策", "2421": "建準", "2376": "技嘉",
         "2454": "聯發科", "3711": "日月光投控", "3661": "世芯-KY", "3443": "創意",
         "3131": "弘塑", "3583": "辛耘", "3680": "家登", "1560": "中砂", "6187": "萬潤",
         "3035": "智原", "6643": "M31", "6462": "神盾", "6533": "晶心科",
-        "2337": "旺宏", "2344": "華邦電", "2408": "南亞科", "3260": "威剛", "5289": "宜鼎",
         "2049": "上銀", "1590": "亞德客-KY", "2395": "研華", "6166": "橫河/凌華", "4576": "大銀微"
     }
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -83,16 +82,10 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
-    # 技術形態與數據計算
+    # 技術形態計算
     has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
-    
-    # 均線計算
-    ma5_all = c.rolling(5).mean()
-    ma10_all = c.rolling(10).mean()
-    ma20_all = c.rolling(20).mean()
-    ma5, ma10, ma20 = ma5_all.iloc[-1], ma10_all.iloc[-1], ma20_all.iloc[-1]
-    
+    ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
     is_engulfing = (c.iloc[-1] > o.iloc[-1]) and (c.iloc[-1] > o.iloc[-2]) and (c.iloc[-1] > ma5)
     
     high_20d = h.iloc[-20:-1].max()
@@ -113,16 +106,13 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     
     extra_boost = 25.0 if (is_vol_burst and is_breakthrough) else 0.0
     if extra_boost: pattern = "🔥 動能突破" if pattern == "趨勢追蹤" else f"{pattern}+🔥"
-    
-    if is_volume_dry and is_price_tight:
-        pattern += " 💤"
-    
+    if is_volume_dry and is_price_tight: pattern += " 💤"
     if growth_boost > 10: pattern += "💰"
     if value_status == "低估": pattern += "🎯"
     
     final_pattern = f"{pattern} {theme_label}" if theme_label else pattern
     
-    # 吸籌力計算
+    # 吸籌力
     v_smooth_avg = (v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2
     v_ratio = float(v.iloc[-1]) / v_smooth_avg
     trend_bonus = 10.0 if (ma5 > ma10 > ma20) else 0.0
@@ -152,7 +142,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v8.5.9", layout="wide")
-st.title("🏹 供應鏈戰情室 v8.5.9 (手機卡片優化版)")
+st.title("🏹 供應鏈戰情室 v8.5.9 (手機直式燈號版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -166,15 +156,25 @@ with st.sidebar:
     st.divider()
     view_mode = st.radio("📱 顯示模式", ["手機卡片 (直式)", "傳統表格 (橫式)"])
     st.divider()
+    st.header("💡 15% 波段實戰準則")
+    st.markdown("""
+    - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 強勢形態+低基期。
+    - <font color='#6f42c1'>**🟣 紫燈 (潛力突襲)**</font>: 成交量極縮+橫盤。
+    - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回檔止跌標的。
+    - <font color='#ffc107'>**🟡 黃燈 (築底觀察)**</font>: 剛出現起漲訊號。
+    - <font color='#dc3545'>**🔴 紅燈 (警戒避開)**</font>: 避免追高。
+    - <font color='#17a2b8'>**🔥 圖示 (動能突破)**</font> | <font color='#ffffff'>**💤 (窒息量)**</font>
+    """, unsafe_allow_html=True)
+    st.divider()
     min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 40); bottom_only = st.checkbox("僅顯示形態確立股", value=True)
-    eps_threshold = st.slider("📈 EPS 成長倍數門檻", 1.0, 5.0, 1.7, 0.1)
+    eps_threshold = st.slider("📈 EPS 成長門檻", 1.0, 5.0, 1.7, 0.1)
 
 if st.button("🚀 啟動 V8.5.9 全面掃描"):
     raw_codes = chains[selected_chain].copy()
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
     
-    with st.spinner('分析中...'):
+    with st.spinner('掃描中...'):
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         st.caption(f"🕒 更新時間：{update_time}")
         for code in raw_codes:
@@ -201,14 +201,12 @@ if st.button("🚀 啟動 V8.5.9 全面掃描"):
 
 if results:
     df_res = pd.DataFrame(results)
-    tabs = st.tabs(["🟢 優先關注", "🟣 潛力突襲", "🔵 準備續攻", "🟡 築底觀察", "⚪ 一般波動", "🔴 警戒避開", "⭐ 全部標的"])
+    tabs = st.tabs(["🟢 優先", "🟣 突襲", "🔵 續攻", "🟡 築底", "⚪ 一般", "🔴 警戒", "⭐ 全部"])
     for i, cat in enumerate(["🟢 優先關注", "🟣 潛力突襲", "🔵 準備續攻", "🟡 築底觀察", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
         with tabs[i]:
             display_df = df_res.sort_values("波段評分", ascending=False) if cat == "全部" else df_res[df_res["風險"] == cat].sort_values("波段評分", ascending=False)
-            
             if display_df.empty:
-                st.write(f"目前無 {cat} 標的。")
-                continue
+                st.write(f"目前無 {cat} 標的。"); continue
 
             if view_mode == "傳統表格 (橫式)":
                 st.dataframe(display_df, column_config={
@@ -217,28 +215,31 @@ if results:
                     "波段評分": st.column_config.ProgressColumn(min_value=0, max_value=400), 
                 }, use_container_width=True, hide_index=True)
             else:
-                # --- 手機版直式卡片佈局 ---
                 for _, row in display_df.iterrows():
+                    # 抓取燈號 icon
+                    icon = row['風險'][:2]
                     with st.container(border=True):
-                        c1, c2 = st.columns([2, 1])
-                        c1.subheader(f"{row['名稱']} ({row['代號']})")
+                        c1, c2 = st.columns([2.5, 1.2])
+                        c1.subheader(f"{icon} {row['名稱']} ({row['代號']})")
                         c2.link_button("📈 看圖表", row['連結'], use_container_width=True)
                         
                         col_l, col_r = st.columns(2)
                         with col_l:
                             st.write(f"**現價:** `{row['現價']}`")
-                            st.write(f"**風險:** {row['風險']}")
-                            st.write(f"**形態:** {row['形態']}")
-                            st.write(f"**波段評分:** `{row['波段評分']}`")
-                        with col_r:
                             st.write(f"**吸籌力:** `{row['吸籌力 🐋']}`")
+                            st.write(f"**形態:** {row['形態']}")
+                        with col_r:
+                            st.write(f"**風險:** {row['風險']}")
                             st.write(f"**5日漲跌:** `{row['5日%']}%`")
                             st.write(f"**15日漲跌:** `{row['15日%']}%`")
-                            st.write(f"**評價:** `{row['評價']}`")
                         
-                        with st.expander("🔍 查看詳細財報區間 (EPS/合理價)"):
-                            st.write(f"**預估 EPS:** {row['預估 EPS']} | **前一年:** {row['前一年 EPS']}")
+                        st.write(f"**波段評分:**")
+                        st.progress(min(int(row['波段評分'])/400, 1.0), text=f"{row['波段評分']}")
+                        
+                        with st.expander("🔍 財報與價值評估"):
+                            st.write(f"**評價:** `{row['評價']}` | **預估 EPS:** {row['預估 EPS']}")
                             st.write(f"**合理區間:** {row['合理區間(20-25)']}")
+                            st.write(f"**前一年 EPS:** {row['前一年 EPS']}")
                             st.write(f"**去年(曆年)區間:** {row['去年(曆年)區間']}")
 
 else: st.write("請啟動掃描。")
