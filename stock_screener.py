@@ -10,7 +10,7 @@ from datetime import datetime
 def get_reliable_name_map():
     backup_names = {
         "2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "6669": "緯穎",
-        "3017": "奇亮", "3324": "雙鴻", "3653": "健策", "2421": "建準", "2376": "技嘉",
+        "3017": "奇鋐", "3324": "雙鴻", "3653": "健策", "2421": "建準", "2376": "技嘉",
         "2454": "聯發科", "3711": "日月光投控", "3661": "世芯-KY", "3443": "創意",
         "3131": "弘塑", "3583": "辛耘", "3680": "家登", "1560": "中砂", "6187": "萬潤",
         "3035": "智原", "6643": "M31", "6462": "神盾", "6533": "晶心科",
@@ -82,15 +82,13 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
-    # 技術形態計算
+    # 技術形態與數據計算
     has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
     ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
     is_engulfing = (c.iloc[-1] > o.iloc[-1]) and (c.iloc[-1] > o.iloc[-2]) and (c.iloc[-1] > ma5)
-    
     high_20d = h.iloc[-20:-1].max()
     is_pullback_stop = (high_20d > c.iloc[-1] * 1.05) and (c.iloc[-1] > ma5) and (c.iloc[-1] > high_20d * 0.90)
-    
     v_avg5 = v.rolling(5).mean().iloc[-2]
     is_vol_burst = v.iloc[-1] > (v_avg5 * (1.2 if mode == "盤中即時偵測" else 1.5))
     is_breakthrough = (c.iloc[-1] > ma20) and (c.iloc[-1] >= h.iloc[-20:].max())
@@ -112,7 +110,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     
     final_pattern = f"{pattern} {theme_label}" if theme_label else pattern
     
-    # 吸籌力
+    # 吸籌力優化計算
     v_smooth_avg = (v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2
     v_ratio = float(v.iloc[-1]) / v_smooth_avg
     trend_bonus = 10.0 if (ma5 > ma10 > ma20) else 0.0
@@ -142,12 +140,13 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v8.5.9", layout="wide")
-st.title("🏹 供應鏈戰情室 v8.5.9 (手機直式燈號版)")
+st.title("🏹 供應鏈戰情室 v8.5.9 (手機直式版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
 results = [] 
 
+# ====================== [全方位左側側邊欄] ======================
 with st.sidebar:
     st.header("⚙️ 掃描設定")
     mode = st.radio("📊 數據模式", ["盤中即時偵測", "盤後定型分析"])
@@ -156,25 +155,31 @@ with st.sidebar:
     st.divider()
     view_mode = st.radio("📱 顯示模式", ["手機卡片 (直式)", "傳統表格 (橫式)"])
     st.divider()
+    
     st.header("💡 15% 波段實戰準則")
     st.markdown("""
-    - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 強勢形態+低基期。
-    - <font color='#6f42c1'>**🟣 紫燈 (潛力突襲)**</font>: 成交量極縮+橫盤。
-    - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回檔止跌標的。
-    - <font color='#ffc107'>**🟡 黃燈 (築底觀察)**</font>: 剛出現起漲訊號。
-    - <font color='#dc3545'>**🔴 紅燈 (警戒避開)**</font>: 避免追高。
-    - <font color='#17a2b8'>**🔥 圖示 (動能突破)**</font> | <font color='#ffffff'>**💤 (窒息量)**</font>
+    - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小，風險低。
+    - <font color='#6f42c1'>**🟣 紫燈 (潛力突襲)**</font>: 成交量極縮+橫盤，變盤前夕。
+    - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回檔止跌、準備二次發動。
+    - <font color='#ffc107'>**🟡 黃燈 (築底觀察)**</font>: 15日漲幅近0%，剛現底部吞噬。
+    - <font color='#dc3545'>**🔴 紅燈 (警戒避開)**</font>: 15日漲幅過高(>30%)，防追高。
+    - <font color='#17a2b8'>**🔥 (動能突破)**</font> / <font color='#6f42c1'>**💰 (成長加分)**</font>
+    - <font color='#ff4b4b'>**🎯 (價值區間)**</font> / <font color='#ffffff'>**💤 (窒息量能)**</font>
     """, unsafe_allow_html=True)
     st.divider()
-    min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 40); bottom_only = st.checkbox("僅顯示形態確立股", value=True)
-    eps_threshold = st.slider("📈 EPS 成長門檻", 1.0, 5.0, 1.7, 0.1)
+    
+    st.header("🎯 過濾門檻")
+    min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 40)
+    bottom_only = st.checkbox("僅顯示形態確立股", value=True)
+    eps_threshold = st.slider("📈 EPS 成長倍數門檻", 1.0, 5.0, 1.7, 0.1)
 
+# ====================== [右側主內容區] ======================
 if st.button("🚀 啟動 V8.5.9 全面掃描"):
     raw_codes = chains[selected_chain].copy()
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
     
-    with st.spinner('掃描中...'):
+    with st.spinner('分析標的與突襲偵測中...'):
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         st.caption(f"🕒 更新時間：{update_time}")
         for code in raw_codes:
@@ -216,10 +221,9 @@ if results:
                 }, use_container_width=True, hide_index=True)
             else:
                 for _, row in display_df.iterrows():
-                    # 抓取燈號 icon
                     icon = row['風險'][:2]
                     with st.container(border=True):
-                        c1, c2 = st.columns([2.5, 1.2])
+                        c1, c2 = st.columns([2.2, 1.1])
                         c1.subheader(f"{icon} {row['名稱']} ({row['代號']})")
                         c2.link_button("📈 看圖表", row['連結'], use_container_width=True)
                         
@@ -233,10 +237,10 @@ if results:
                             st.write(f"**5日漲跌:** `{row['5日%']}%`")
                             st.write(f"**15日漲跌:** `{row['15日%']}%`")
                         
-                        st.write(f"**波段評分:**")
-                        st.progress(min(int(row['波段評分'])/400, 1.0), text=f"{row['波段評分']}")
+                        st.write(f"**波段綜合評分:**")
+                        st.progress(min(max(int(row['波段評分']), 0)/400, 1.0), text=f"{row['波段評分']}")
                         
-                        with st.expander("🔍 財報與價值評估"):
+                        with st.expander("🔍 財報與價值評估區間"):
                             st.write(f"**評價:** `{row['評價']}` | **預估 EPS:** {row['預估 EPS']}")
                             st.write(f"**合理區間:** {row['合理區間(20-25)']}")
                             st.write(f"**前一年 EPS:** {row['前一年 EPS']}")
