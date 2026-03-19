@@ -148,6 +148,7 @@ with st.sidebar:
     st.divider()
     st.header("💡 15% 波段實戰準則")
     st.markdown("""
+    - <font color='#ffffff'>**🟣 試單佈局 → 🟡 築底加碼 → 🟢 優先重倉 → 🔵 藍燈續攻 → ⚪ 波動觀望→ 🔴 紅燈收割**</font>
     - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小，風險低。
     - <font color='#6f42c1'>**🟣 紫燈 (潛力突襲)**</font>: 成交量極縮+橫盤，變盤前夕。
     - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回檔止跌、準備二次發動。
