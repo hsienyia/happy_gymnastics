@@ -122,7 +122,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     
     final_pattern = f"{pattern} {theme_label}" if theme_label else pattern
     
-    # 吸籌力優化計算
+    # 吸籌力計算
     v_smooth_avg = (v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2
     v_ratio = float(v.iloc[-1]) / v_smooth_avg
     trend_bonus = 10.0 if (ma5 > ma10 > ma20) else 0.0
@@ -152,7 +152,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v8.5.9", layout="wide")
-st.title("🏹 供應鏈主力大戶決策戰情室 v8.5.9 (介面優化版)")
+st.title("🏹 供應鏈戰情室 v8.5.9 (手機卡片優化版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -162,32 +162,19 @@ with st.sidebar:
     st.header("⚙️ 掃描設定")
     mode = st.radio("📊 數據模式", ["盤中即時偵測", "盤後定型分析"])
     selected_chain = st.selectbox("選擇預設供應鏈", list(chains.keys()))
-    custom_input = st.text_input("➕ 手動新增標的 (直接分析)", placeholder="例如: 3661, 2308")
+    custom_input = st.text_input("➕ 手動新增標的", placeholder="例如: 3661, 2308")
     st.divider()
-    st.header("💡 15% 波段實戰準則")
-    st.markdown("""
-    - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小。
-    - <font color='#6f42c1'>**🟣 紫燈 (潛力突襲)**</font>: 成交量極縮+橫盤，預防暴風雨前寧靜。
-    - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回檔止跌標的。
-    - <font color='#ffc107'>**🟡 黃燈 (築底觀察)**</font>: 剛出現起漲訊號。
-    - <font color='#dc3545'>**🔴 紅燈 (警戒避開)**</font>: 避免追高。
-    - <font color='#17a2b8'>**🔥 圖示 (動能突破)**</font>: 短期爆發力強。
-    - <font color='#6f42c1'>**💰 圖示 (成長加分)**</font>: EPS 成長強勁。
-    - <font color='#ff4b4b'>**🎯 圖示 (價值區間)**</font>: 低估區。
-    - <font color='#ffffff'>**💤 圖示 (窒息量能)**</font>: 盤整等待變盤。
-    """, unsafe_allow_html=True)
+    view_mode = st.radio("📱 顯示模式", ["手機卡片 (直式)", "傳統表格 (橫式)"])
     st.divider()
     min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 40); bottom_only = st.checkbox("僅顯示形態確立股", value=True)
     eps_threshold = st.slider("📈 EPS 成長倍數門檻", 1.0, 5.0, 1.7, 0.1)
 
 if st.button("🚀 啟動 V8.5.9 全面掃描"):
     raw_codes = chains[selected_chain].copy()
-    manual_codes = []
-    if custom_input:
-        manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()]
-        raw_codes = list(set(raw_codes + manual_codes)) 
+    manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
+    raw_codes = list(set(raw_codes + manual_codes)) 
     
-    with st.spinner('正在分析標的與突襲偵測...'):
+    with st.spinner('分析中...'):
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         st.caption(f"🕒 更新時間：{update_time}")
         for code in raw_codes:
@@ -204,30 +191,54 @@ if st.button("🚀 啟動 V8.5.9 全面掃描"):
                     if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
                     if w_score < min_whale and "潛力突襲" not in risk: continue
                 results.append({
-                    "名稱": name_map.get(code, code), 
-                    "🔗 連結": f"https://tw.stock.yahoo.com/quote/{code}", 
-                    "代號": code,
-                    "現價": price, "去年(曆年)區間": ly_range, "合理區間(20-25)": fair_range, 
+                    "名稱": name_map.get(code, code), "代號": code, "現價": price, 
+                    "去年(曆年)區間": ly_range, "合理區間(20-25)": fair_range, 
                     "評價": status, "前一年 EPS": t_eps, "預估 EPS": f_eps, "風險": risk, "形態": pattern, 
-                    "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total
+                    "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total,
+                    "連結": f"https://tw.stock.yahoo.com/quote/{code}"
                 })
             except: continue
 
 if results:
     df_res = pd.DataFrame(results)
-    # 重新排列欄位順序，讓連結緊跟在名稱後面
-    cols = ["名稱", "🔗 連結", "現價", "去年(曆年)區間", "合理區間(20-25)", "評價", "前一年 EPS", "預估 EPS", "風險", "形態", "吸籌力 🐋", "5日%", "15日%", "波段評分"]
-    df_res = df_res[cols]
-    
     tabs = st.tabs(["🟢 優先關注", "🟣 潛力突襲", "🔵 準備續攻", "🟡 築底觀察", "⚪ 一般波動", "🔴 警戒避開", "⭐ 全部標的"])
     for i, cat in enumerate(["🟢 優先關注", "🟣 潛力突襲", "🔵 準備續攻", "🟡 築底觀察", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
         with tabs[i]:
             display_df = df_res.sort_values("波段評分", ascending=False) if cat == "全部" else df_res[df_res["風險"] == cat].sort_values("波段評分", ascending=False)
-            if not display_df.empty:
+            
+            if display_df.empty:
+                st.write(f"目前無 {cat} 標的。")
+                continue
+
+            if view_mode == "傳統表格 (橫式)":
                 st.dataframe(display_df, column_config={
-                    "🔗 連結": st.column_config.LinkColumn("代號", display_text=r"(\d+)"), # 用正則表達式或預存的代號顯示
-                    "現價": st.column_config.NumberColumn(format="%.2f"), 
+                    "連結": st.column_config.LinkColumn("圖表/代號", display_text="代號"),
+                    "代號": None, "現價": st.column_config.NumberColumn(format="%.2f"), 
                     "波段評分": st.column_config.ProgressColumn(min_value=0, max_value=400), 
                 }, use_container_width=True, hide_index=True)
-            else: st.write(f"目前無 {cat} 標的。")
+            else:
+                # --- 手機版直式卡片佈局 ---
+                for _, row in display_df.iterrows():
+                    with st.container(border=True):
+                        c1, c2 = st.columns([2, 1])
+                        c1.subheader(f"{row['名稱']} ({row['代號']})")
+                        c2.link_button("📈 看圖表", row['連結'], use_container_width=True)
+                        
+                        col_l, col_r = st.columns(2)
+                        with col_l:
+                            st.write(f"**現價:** `{row['現價']}`")
+                            st.write(f"**風險:** {row['風險']}")
+                            st.write(f"**形態:** {row['形態']}")
+                            st.write(f"**波段評分:** `{row['波段評分']}`")
+                        with col_r:
+                            st.write(f"**吸籌力:** `{row['吸籌力 🐋']}`")
+                            st.write(f"**5日漲跌:** `{row['5日%']}%`")
+                            st.write(f"**15日漲跌:** `{row['15日%']}%`")
+                            st.write(f"**評價:** `{row['評價']}`")
+                        
+                        with st.expander("🔍 查看詳細財報區間 (EPS/合理價)"):
+                            st.write(f"**預估 EPS:** {row['預估 EPS']} | **前一年:** {row['前一年 EPS']}")
+                            st.write(f"**合理區間:** {row['合理區間(20-25)']}")
+                            st.write(f"**去年(曆年)區間:** {row['去年(曆年)區間']}")
+
 else: st.write("請啟動掃描。")
