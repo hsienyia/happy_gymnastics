@@ -50,18 +50,18 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     c, l, h, o, v = df['Close'], df['Low'], df['High'], df['Open'], df['Volume']
     
     theme_label, theme_boost = "", 0.0
-    if is_manual: theme_label = "(手動分析)"; theme_boost = 10.0 
+    if is_manual: theme_label = "手動"; theme_boost = 10.0 
     
     try:
         info = ticker_obj.info
         industry = info.get('industry', '').lower()
         summary = info.get('longBusinessSummary', '').lower()
         if any(k in industry or k in summary for k in ['semiconductor', 'asic', 'design house']):
-            theme_label = "(ASIC+30)"; theme_boost = 30.0
+            theme_label = "ASIC"; theme_boost = 30.0
         elif any(k in industry or k in summary for k in ['robot', 'automation', 'machinery']):
-            theme_label = "(Robot+25)"; theme_boost = 25.0
+            theme_label = "Robot"; theme_boost = 25.0
         elif any(k in industry or k in summary for k in ['power', 'liquid cooling', 'thermal']):
-            theme_label = "(Cooling+20)"; theme_boost = 20.0
+            theme_label = "Cooling"; theme_boost = 20.0
     except: pass
 
     fwd_eps, trail_eps, growth_boost = 0.0, 0.0, 0.0
@@ -82,7 +82,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
-    # 技術形態與數據計算
+    # 技術形態計算
     has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
     ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
@@ -92,9 +92,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     v_avg5 = v.rolling(5).mean().iloc[-2]
     is_vol_burst = v.iloc[-1] > (v_avg5 * (1.2 if mode == "盤中即時偵測" else 1.5))
     is_breakthrough = (c.iloc[-1] > ma20) and (c.iloc[-1] >= h.iloc[-20:].max())
-
-    avg_v_20 = v.rolling(20).mean().iloc[-1]
-    is_volume_dry = v.iloc[-1] < (avg_v_20 * 0.5) 
+    is_volume_dry = v.iloc[-1] < (v.rolling(20).mean().iloc[-1] * 0.5) 
     is_price_tight = (h.iloc[-5:].max() - l.iloc[-5:].min()) / c.iloc[-1] < 0.04 
 
     pattern, p_score = "趨勢追蹤", 0.0
@@ -108,16 +106,10 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     if growth_boost > 10: pattern += "💰"
     if value_status == "低估": pattern += "🎯"
     
-    final_pattern = f"{pattern} {theme_label}" if theme_label else pattern
-    
-    # 吸籌力優化計算
-    v_smooth_avg = (v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2
-    v_ratio = float(v.iloc[-1]) / v_smooth_avg
-    trend_bonus = 10.0 if (ma5 > ma10 > ma20) else 0.0
-    close_pos_score = ((float(c.iloc[-1])-float(l.iloc[-1]))/(float(h.iloc[-1])-float(l.iloc[-1]))*15.0 if (float(h.iloc[-1])-float(l.iloc[-1]))>0 else 7.0)
-    w_raw = (v_ratio * 15.0) + close_pos_score + trend_bonus
-    price_factor = 1.2 if c.iloc[-1] > 2000 else 1.0
-    w_score = round(w_raw * price_factor, 1)
+    # 吸籌力
+    v_ratio = float(v.iloc[-1]) / ((v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2)
+    w_raw = (v_ratio * 15.0) + ((float(c.iloc[-1])-float(l.iloc[-1]))/(float(h.iloc[-1])-float(l.iloc[-1]))*15.0 if (float(h.iloc[-1])-float(l.iloc[-1]))>0 else 7.0) + (10.0 if (ma5 > ma10 > ma20) else 0.0)
+    w_score = round(w_raw * (1.2 if c.iloc[-1] > 2000 else 1.0), 1)
     
     ret_5d, ret_15d = round(((c.iloc[-1]/c.iloc[-6])-1)*100, 2), round(((c.iloc[-1]/c.iloc[-16])-1)*100, 2)
     total_score = round(float(p_score) + float(w_score) + (float(ret_5d) * 2.5) + float(extra_boost) + float(growth_boost) + float(theme_boost), 1)
@@ -136,17 +128,16 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
         if not hly.empty: ly_range = f"{round(hly['Low'].min(), 1)} - {round(hly['High'].max(), 1)}"
     except: pass
 
-    return final_pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range
+    return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v8.5.9", layout="wide")
-st.title("🏹 供應鏈戰情室 v8.5.9 (手機直式版)")
+st.title("🏹 供應鏈戰情室 v8.5.9 (手機勳章版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
 results = [] 
 
-# ====================== [全方位左側側邊欄] ======================
 with st.sidebar:
     st.header("⚙️ 掃描設定")
     mode = st.radio("📊 數據模式", ["盤中即時偵測", "盤後定型分析"])
@@ -155,7 +146,6 @@ with st.sidebar:
     st.divider()
     view_mode = st.radio("📱 顯示模式", ["手機卡片 (直式)", "傳統表格 (橫式)"])
     st.divider()
-    
     st.header("💡 15% 波段實戰準則")
     st.markdown("""
     - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小，風險低。
@@ -167,83 +157,75 @@ with st.sidebar:
     - <font color='#ff4b4b'>**🎯 (價值區間)**</font> / <font color='#ffffff'>**💤 (窒息量能)**</font>
     """, unsafe_allow_html=True)
     st.divider()
-    
-    st.header("🎯 過濾門檻")
     min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 40)
     bottom_only = st.checkbox("僅顯示形態確立股", value=True)
-    eps_threshold = st.slider("📈 EPS 成長倍數門檻", 1.0, 5.0, 1.7, 0.1)
+    eps_threshold = st.slider("📈 EPS 成長門檻", 1.0, 5.0, 1.7, 0.1)
 
-# ====================== [右側主內容區] ======================
 if st.button("🚀 啟動 V8.5.9 全面掃描"):
     raw_codes = chains[selected_chain].copy()
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
-    
-    with st.spinner('分析標的與突襲偵測中...'):
-        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.caption(f"🕒 更新時間：{update_time}")
+    with st.spinner('掃描中...'):
         for code in raw_codes:
             try:
-                is_manual_stock = code in manual_codes
                 full_code = code + (".TW" if int(code) < 5000 else ".TWO")
                 t_obj = yf.Ticker(full_code)
                 df = t_obj.history(period="60d")
                 if df.empty: continue
-                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=is_manual_stock)
+                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes))
                 if not res: continue
-                pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range = res
-                if not is_manual_stock:
+                pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
+                if code not in manual_codes:
                     if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
                     if w_score < min_whale and "潛力突襲" not in risk: continue
                 results.append({
-                    "名稱": name_map.get(code, code), "代號": code, "現價": price, 
-                    "去年(曆年)區間": ly_range, "合理區間(20-25)": fair_range, 
-                    "評價": status, "前一年 EPS": t_eps, "預估 EPS": f_eps, "風險": risk, "形態": pattern, 
-                    "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total,
-                    "連結": f"https://tw.stock.yahoo.com/quote/{code}"
+                    "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
+                    "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total, "題材": theme,
+                    "連結": f"https://tw.stock.yahoo.com/quote/{code}", "評價": status, "預估 EPS": f_eps,
+                    "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
                 })
             except: continue
 
 if results:
-    df_res = pd.DataFrame(results)
+    df_res = pd.DataFrame(results).sort_values("波段評分", ascending=False)
+    # 分配勳章
+    top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
+    
     tabs = st.tabs(["🟢 優先", "🟣 突襲", "🔵 續攻", "🟡 築底", "⚪ 一般", "🔴 警戒", "⭐ 全部"])
     for i, cat in enumerate(["🟢 優先關注", "🟣 潛力突襲", "🔵 準備續攻", "🟡 築底觀察", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
         with tabs[i]:
-            display_df = df_res.sort_values("波段評分", ascending=False) if cat == "全部" else df_res[df_res["風險"] == cat].sort_values("波段評分", ascending=False)
+            display_df = df_res if cat == "全部" else df_res[df_res["風險"] == cat]
             if display_df.empty:
                 st.write(f"目前無 {cat} 標的。"); continue
 
             if view_mode == "傳統表格 (橫式)":
-                st.dataframe(display_df, column_config={
-                    "連結": st.column_config.LinkColumn("圖表/代號", display_text="代號"),
-                    "代號": None, "現價": st.column_config.NumberColumn(format="%.2f"), 
-                    "波段評分": st.column_config.ProgressColumn(min_value=0, max_value=400), 
-                }, use_container_width=True, hide_index=True)
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
             else:
-                for _, row in display_df.iterrows():
-                    icon = row['風險'][:2]
+                for idx, row in display_df.reset_index(drop=True).iterrows():
+                    medal = top_medals.get(idx, "") if cat == "全部" else ""
+                    theme_tag = f"【{row['題材']}】" if row['題材'] else ""
                     with st.container(border=True):
-                        c1, c2 = st.columns([2.2, 1.1])
-                        c1.subheader(f"{icon} {row['名稱']} ({row['代號']})")
+                        c1, c2 = st.columns([2, 1])
+                        c1.subheader(f"{row['風險'][:2]} {row['名稱']} ({row['代號']})")
+                        if medal: c1.caption(f"{medal} {theme_tag}")
+                        elif theme_tag: c1.caption(theme_tag)
                         c2.link_button("📈 看圖表", row['連結'], use_container_width=True)
                         
                         col_l, col_r = st.columns(2)
                         with col_l:
                             st.write(f"**現價:** `{row['現價']}`")
                             st.write(f"**吸籌力:** `{row['吸籌力 🐋']}`")
-                            st.write(f"**形態:** {row['形態']}")
+                            st.markdown(f"**5日漲跌:** <font color='{'#ff4b4b' if row['5日%'] > 0 else '#28a745'}'>{row['5日%']}%</font>", unsafe_allow_html=True)
                         with col_r:
-                            st.write(f"**風險:** {row['風險']}")
-                            st.write(f"**5日漲跌:** `{row['5日%']}%`")
-                            st.write(f"**15日漲跌:** `{row['15日%']}%`")
+                            st.write(f"**評價:** `{row['評價']}`")
+                            st.write(f"**形態:** {row['形態']}")
+                            st.markdown(f"**15日漲跌:** <font color='{'#ff4b4b' if row['15日%'] > 0 else '#28a745'}'>{row['15日%']}%</font>", unsafe_allow_html=True)
                         
                         st.write(f"**波段綜合評分:**")
                         st.progress(min(max(int(row['波段評分']), 0)/400, 1.0), text=f"{row['波段評分']}")
                         
-                        with st.expander("🔍 財報與價值評估區間"):
-                            st.write(f"**評價:** `{row['評價']}` | **預估 EPS:** {row['預估 EPS']}")
-                            st.write(f"**合理區間:** {row['合理區間(20-25)']}")
-                            st.write(f"**前一年 EPS:** {row['前一年 EPS']}")
-                            st.write(f"**去年(曆年)區間:** {row['去年(曆年)區間']}")
+                        with st.expander("🔍 財報與價值評估詳情"):
+                            st.write(f"**合理區間:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
+                            st.write(f"**前一年 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
 
 else: st.write("請啟動掃描。")
