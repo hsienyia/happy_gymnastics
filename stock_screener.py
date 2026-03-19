@@ -142,8 +142,8 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
 # ====================== 3. UI 介面 ======================
-st.set_page_config(page_title="戰情室 v8.5.9", layout="wide")
-st.title("🏹 供應鏈戰情室 v8.5.9 (手機勳章版)")
+st.set_page_config(page_title="戰情室 v9.0", layout="wide")
+st.title("🏹 供應鏈戰情室 v9.0 (手機勳章版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -173,7 +173,7 @@ with st.sidebar:
     bottom_only = st.checkbox("僅顯示形態確立股", value=True)
     eps_threshold = st.slider("📈 EPS 成長門檻", 1.0, 5.0, 1.7, 0.1)
 
-if st.button("🚀 啟動 V8.5.9 全面掃描"):
+if st.button("🚀 啟動 V9.0 全面掃描"):
     raw_codes = chains[selected_chain].copy()
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
