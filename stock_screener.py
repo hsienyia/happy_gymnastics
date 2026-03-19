@@ -190,7 +190,7 @@ with st.sidebar:
     - <font color='#ffffff'>**💤 圖示 (窒息量能)**</font>: 盤整等待變盤。
     """, unsafe_allow_html=True)
     st.divider()
-    min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 20); bottom_only = st.checkbox("僅顯示形態確立股", value=True)
+    min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 40); bottom_only = st.checkbox("僅顯示形態確立股", value=True)
     eps_threshold = st.slider("📈 EPS 成長倍數門檻", 1.0, 5.0, 1.7, 0.1)
 
 if st.button("🚀 啟動 V8.5.9 全面掃描"):
