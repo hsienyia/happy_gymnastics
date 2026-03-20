@@ -49,10 +49,9 @@ def get_supply_chain_db():
 # ====================== 2. 核心分析邏輯 ======================
 def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False):
     if mode == "盤後定型分析" and len(df) > 1: df = df.iloc[:-1]
-    if len(df) < 30: return None # 放寬天數門檻以利抓取
+    if len(df) < 30: return None
     
-    # 強制欄位名稱與格式
-    df.columns = [col.lower() for col in df.columns]
+    # 強制對應富果欄位
     c, l, h, o, v = df['close'], df['low'], df['high'], df['open'], df['volume']
     
     theme_label, theme_boost = "", 0.0
@@ -77,6 +76,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
             theme_label = "CoWoS"; theme_boost = 25.0
         elif any(k in summary or k in industry for k in ['ai server', 'high performance computing']):
             theme_label = "AI伺服器"; theme_boost = 20.0
+            
     except: pass
 
     fwd_eps, trail_eps, growth_boost = 0.0, 0.0, 0.0
@@ -97,7 +97,6 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
-    # 技術指標
     has_down_gap = any(h.iloc[i] < l.iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(l.iloc[-1]) > float(h.iloc[-2])
     ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
@@ -148,6 +147,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 st.set_page_config(page_title="戰情室 v9.0", layout="wide")
 st.title("🏹 供應鏈戰情室 v9.0 (不覆寫修正版)")
 
+# 富果 API 金鑰與客戶端
 FUGLE_API_KEY = "MDVkN2NhOTgtNWE1Yi00NjhmLWIyNWMtMDFkZTA4ZmIwYzY4IDk2ZTY0ZDAzLWIyNmItNDE5My1iYTU1LTkwZmMxZjcxZWJiNA=="
 client = RestClient(api_key=FUGLE_API_KEY)
 
@@ -192,17 +192,23 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-    with st.spinner('Fugle 數據連線中...'):
+    with st.spinner('Fugle 數據抓取中...'):
         for code in raw_codes:
             try:
-                # 關鍵修正：使用富果 API 獲取數據
+                # 核心修正：滿足富果 API 參數要求
                 stock = client.stock
-                data = stock.historical.candles(symbol=code, timeframe='d', fields=['open', 'high', 'low', 'close', 'volume'])
+                # 1. timeframe 必須大寫 'D'
+                # 2. fields 必須包含所有必要欄位
+                data = stock.historical.candles(
+                    symbol=code, 
+                    timeframe='D', 
+                    fields=['open', 'high', 'low', 'close', 'volume', 'turnover', 'change']
+                )
                 df_f = pd.DataFrame(data)
                 
                 if df_f.empty: continue
                 
-                # 格式對齊
+                # 格式轉換
                 df_f['date'] = pd.to_datetime(df_f['date'])
                 df_f = df_f.set_index('date').sort_index()
                 
@@ -224,7 +230,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                     "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
                 })
             except Exception as e:
-                # 若出錯，會在 Streamlit 畫面提示以便除錯
+                # 在介面上顯示具體錯誤，方便第一時間抓蟲
                 st.error(f"❌ {code} 掃描錯誤: {str(e)}")
                 continue
 
