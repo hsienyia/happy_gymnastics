@@ -206,23 +206,23 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
 if results:
     df_new = pd.DataFrame(results)
     
-    # ================= 雲端同步邏輯 =================
+    # ================= 雲端同步邏輯 (對齊修正版) =================
     if conn:
-    try:
-        # 1. 嘗試讀取（測試權限與網址）
-        existing_data = conn.read() 
-        
-        # 2. 合併資料
-        updated_df = pd.concat([existing_data, df_new], ignore_index=True)
-        
-        # 3. 寫入資料（測試格式）
-        conn.update(data=updated_df)
-        st.success("☁️ 雲端同步成功！")
-    except Exception as e:
-        st.error(f"❌ 偵錯訊息：{str(e)}") # 這裡會顯示更詳細的錯誤原因
+        try:
+            # 這裡必須向右縮進 8 個空格 (屬於 if 內的 try)
+            existing_data = conn.read(worksheet="Sheet1")
+            updated_df = pd.concat([existing_data, df_new], ignore_index=True)
+            updated_df = updated_df.drop_duplicates(subset=['時間', '代號'])
+            
+            # 執行更新
+            conn.update(worksheet="Sheet1", data=updated_df)
+            st.success("☁️ 雲端同步成功！數據已累加至 Google Sheets。")
+        except Exception as e:
+            # 這裡也要對齊
+            st.warning(f"⚠️ 雲端同步暫時失敗 (請確認 Secrets 設定): {e}")
 
+    # 接下來是原本的顯示邏輯 (與 if conn 平級，縮進 4 個空格)
     df_res = df_new.sort_values("評分", ascending=False)
-    # ... (後續卡片顯示代碼與之前相同)
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
     tabs = st.tabs(["🟣 突襲", "🟡 築底", "🟢 優先", "🔵 續攻", "⚪ 一般", "🔴 警戒", "⭐ 全部"])
     for i, cat in enumerate(["🟣 潛力突襲", "🟡 築底觀察", "🟢 優先關注", "🔵 準備續攻", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
