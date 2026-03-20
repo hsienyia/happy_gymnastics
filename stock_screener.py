@@ -174,7 +174,7 @@ with st.sidebar:
     - <font color='#ff4b4b'>**🎯 (價值區間)**</font> / <font color='#ffffff'>**💤 (窒息量能)**</font>
     """, unsafe_allow_html=True)
     st.divider()
-    min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 40)
+    min_whale = st.slider("主力吸籌門檻 ((Whale))", 0, 100, 40)
     bottom_only = st.checkbox("僅顯示形態確立股", value=True)
     eps_threshold = st.slider("📈 EPS 成長門檻", 1.0, 5.0, 1.7, 0.1)
 
@@ -198,7 +198,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                 results.append({
                     "時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
-                    "吸籌力🐋": w_score, "5日%": r5, "15日%": r15, "評分": total, "題材": theme,
+                    "吸籌力(Whale)": w_score, "5日%": r5, "15日%": r15, "評分": total, "題材": theme,
                     "評價": status, "預估EPS": f_eps, "合理價": fair_range
                 })
             except: continue
@@ -244,7 +244,7 @@ if results:
                         col_l, col_r = st.columns(2)
                         with col_l:
                             st.write(f"**現價:** `{row['現價']}`")
-                            st.write(f"**吸籌力:** `{row['吸籌力🐋']}`")
+                            st.write(f"**吸籌力:** `{row['吸籌力(Whale)']}`")
                             st.markdown(f"**5日漲跌:** {row['5日%']}%")
                         with col_r:
                             st.write(f"**評價:** `{row['評價']}`")
