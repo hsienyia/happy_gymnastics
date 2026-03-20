@@ -198,7 +198,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                 results.append({
                     "時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
-                    "吸籌力🐋": w_score, "5日%": r5, "15日%": r15, "評分": total, "題材": theme,
+                    "吸籌力(Whale)": w_score, "5日%": r5, "15日%": r15, "評分": total, "題材": theme,
                     "評價": status, "預估EPS": f_eps, "合理價": fair_range
                 })
             except: continue
