@@ -8,7 +8,7 @@ import pytz
 from streamlit_gsheets import GSheetsConnection
 from fugle_marketdata import RestClient 
 
-# ====================== 1. 股票名稱與供應鏈資料 ======================
+# ====================== 1. 股票名稱與供應鏈資料 (還原完整版) ======================
 @st.cache_data(ttl=86400)
 def get_reliable_name_map():
     backup_names = {
@@ -46,7 +46,7 @@ def get_supply_chain_db():
     for codes in base_chains.values(): all_codes.extend(codes)
     return {"💎 核心標的總匯 (ALL)": list(set(all_codes)), **base_chains}
 
-# ====================== 2. 核心分析邏輯 ======================
+# ====================== 2. 核心分析邏輯 (還原完整版指標與評分) ======================
 def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False):
     if mode == "盤後定型分析" and len(df) > 1: df = df.iloc[:-1]
     if len(df) < 30: return None
@@ -95,13 +95,15 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
-    # 技術指標
-    ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
+    # --- 完整還原技術指標運算 ---
     has_down_gap = any(h.iloc[i] < l.iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(l.iloc[-1]) > float(h.iloc[-2])
+    ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
     is_engulfing = (c.iloc[-1] > o.iloc[-1]) and (c.iloc[-1] > o.iloc[-2]) and (c.iloc[-1] > ma5)
+    
     high_20d = h.iloc[-20:-1].max()
     is_pullback_stop = (high_20d > c.iloc[-1] * 1.05) and (c.iloc[-1] > ma5) and (c.iloc[-1] > high_20d * 0.90)
+    
     v_avg5 = v.rolling(5).mean().iloc[-2]
     is_vol_burst = v.iloc[-1] > (v_avg5 * (1.2 if mode == "盤中即時偵測" else 1.5))
     is_breakthrough = (c.iloc[-1] > ma20) and (c.iloc[-1] >= h.iloc[-20:].max())
@@ -119,6 +121,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     if growth_boost > 10: pattern += "💰"
     if value_status == "低估": pattern += "🎯"
     
+    # 完整還原吸籌力評分
     v_ratio = float(v.iloc[-1]) / ((v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2)
     w_raw = (v_ratio * 15.0) + ((float(c.iloc[-1])-float(l.iloc[-1]))/(float(h.iloc[-1])-float(l.iloc[-1]))*15.0 if (float(h.iloc[-1])-float(l.iloc[-1]))>0 else 7.0) + (10.0 if (ma5 > ma10 > ma20) else 0.0)
     w_score = round(w_raw * (1.2 if c.iloc[-1] > 2000 else 1.0), 1)
@@ -142,7 +145,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
-# ====================== 3. UI 介面 ======================
+# ====================== 3. UI 介面與主邏輯 (全功能還原) ======================
 st.set_page_config(page_title="戰情室 v9.0", layout="wide")
 st.title("🏹 供應鏈戰情室 v9.0 (不覆寫修正版)")
 
@@ -167,6 +170,7 @@ with st.sidebar:
     view_mode = st.radio("📱 顯示模式", ["手機卡片 (直式)", "傳統表格 (橫式)"])
     st.divider()
     st.header("💡 15% 波段實戰準則")
+    # --- 還原完整配色與說明 ---
     st.markdown("""
     - <font color='#ffffff'>**🟣 試單佈局 → 🟡 築底加碼 → 🟢 優先重倉 → 🔵 藍燈續攻 → ⚪ 波動觀望→ 🔴 紅燈收割**</font>
     - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小，風險低。
@@ -193,24 +197,29 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     with st.spinner('Fugle 數據抓取中...'):
         for code in raw_codes:
             try:
-                # 關鍵修正：fields 改用字串格式傳遞，避免 URL 編碼錯誤
-                data = client.stock.historical.candles(
+                # --- 關鍵修復區 ---
+                raw_data = client.stock.historical.candles(
                     symbol=code, 
                     timeframe='D', 
                     fields="open,high,low,close,volume,turnover,change"
                 )
-                df_f = pd.DataFrame(data)
+                if 'candles' not in raw_data or not raw_data['candles']: continue
                 
-                if df_f.empty: continue
-                
+                df_f = pd.DataFrame(raw_data['candles'])
                 df_f['date'] = pd.to_datetime(df_f['date'])
                 df_f = df_f.set_index('date').sort_index()
+                # -----------------
                 
                 t_obj = yf.Ticker(f"{code}.TW")
                 res = analyze_stock_full(t_obj, df_f, mode, eps_threshold, code, is_manual=(code in manual_codes))
                 
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
+                
+                # 過濾邏輯還原
+                if code not in manual_codes:
+                    if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
+                    if w_score < min_whale and "潛力突襲" not in risk: continue
                 
                 results.append({
                     "時間": current_time_str,
