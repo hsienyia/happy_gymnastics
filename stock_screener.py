@@ -57,20 +57,20 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
         industry = info.get('industry', '').lower()
         summary = info.get('longBusinessSummary', '').lower()
         
-        # 題材自動判定邏輯更新區
+        # 題材自動判定邏輯更新區 (v9.0 新增)
         if any(k in industry or k in summary for k in ['semiconductor', 'asic', 'design house']):
             theme_label = "ASIC"; theme_boost = 30.0
         elif any(k in industry or k in summary for k in ['robot', 'automation', 'machinery']):
             theme_label = "Robot"; theme_boost = 25.0
         elif any(k in industry or k in summary for k in ['power', 'liquid cooling', 'thermal']):
             theme_label = "Cooling"; theme_boost = 20.0
-        elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']):
+        elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication', 'optical fiber']):
             theme_label = "CPO光通訊"; theme_boost = 25.0
-        elif any(k in summary or k in industry for k in ['wafer fabrication equipment', 'semiconductor equipment']):
+        elif any(k in summary or k in industry for k in ['wafer fabrication equipment', 'semiconductor equipment', 'cleaning equipment']):
             theme_label = "半導體設備"; theme_boost = 20.0
-        elif any(k in summary for k in ['cowos', 'advanced packaging']):
+        elif any(k in summary for k in ['cowos', 'advanced packaging', '2.5d', '3d packaging']):
             theme_label = "CoWoS"; theme_boost = 25.0
-        elif any(k in summary or k in industry for k in ['ai server', 'high performance computing']):
+        elif any(k in summary or k in industry for k in ['ai server', 'high performance computing', 'hpc server']):
             theme_label = "AI伺服器"; theme_boost = 20.0
             
     except: pass
