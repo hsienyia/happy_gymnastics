@@ -185,15 +185,10 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     with st.spinner('掃描中...'):
         for code in raw_codes:
             try:
-                if int(code) >= 1000:
-                    full_code = f"{code}.TW"
-                    t_obj = yf.Ticker(full_code)
-                    df = t_obj.history(period="60d")
-                    if df.empty:
-                    full_code = f"{code}.TWO"
-                    t_obj = yf.Ticker(full_code)
-                    df = t_obj.history(period="60d")
-                    if df.empty: continue
+                full_code = code + (".TW" if int(code) < 5000 else ".TWO")
+                t_obj = yf.Ticker(full_code)
+                df = t_obj.history(period="60d")
+                if df.empty: continue
                 res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes))
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
