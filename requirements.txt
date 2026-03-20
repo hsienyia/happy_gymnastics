@@ -4,5 +4,5 @@ yfinance
 beautifulsoup4
 requests
 lxml
-gsheets-connection
+st-gsheets-connection
 xlsxwriter
