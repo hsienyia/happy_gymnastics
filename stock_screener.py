@@ -4,12 +4,10 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 import requests
 from datetime import datetime
-import pytz  
-import time  # 👈 僅新增此項用於解決 429 錯誤
+import pytz  # 用於修正時區
 from streamlit_gsheets import GSheetsConnection
-from fugle_marketdata import RestClient 
 
-# ====================== 1. 股票名稱與供應鏈資料 (還原完整版) ======================
+# ====================== 1. 股票名稱與供應鏈資料 ======================
 @st.cache_data(ttl=86400)
 def get_reliable_name_map():
     backup_names = {
@@ -47,12 +45,12 @@ def get_supply_chain_db():
     for codes in base_chains.values(): all_codes.extend(codes)
     return {"💎 核心標的總匯 (ALL)": list(set(all_codes)), **base_chains}
 
-# ====================== 2. 核心分析邏輯 (還原完整指標與評分) ======================
+# ====================== 2. 核心分析邏輯 ======================
 def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False):
     if mode == "盤後定型分析" and len(df) > 1: df = df.iloc[:-1]
-    if len(df) < 30: return None
+    if len(df) < 40: return None
+    c, l, h, o, v = df['Close'], df['Low'], df['High'], df['Open'], df['Volume']
     
-    c, l, h, o, v = df['close'], df['low'], df['high'], df['open'], df['volume']
     theme_label, theme_boost = "", 0.0
     if is_manual: theme_label = "手動"; theme_boost = 10.0 
     
@@ -61,19 +59,21 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
         industry = info.get('industry', '').lower()
         summary = info.get('longBusinessSummary', '').lower()
         
-        # 完整還原所有題材標籤邏輯
-        keywords = {
-            "ASIC": ['semiconductor', 'asic', 'design house'],
-            "Robot": ['robot', 'automation', 'machinery'],
-            "Cooling": ['power', 'liquid cooling', 'thermal'],
-            "CPO光通訊": ['photonics', 'cpo', 'optical communication'],
-            "半導體設備": ['wafer fabrication equipment', 'semiconductor equipment'],
-            "CoWoS": ['cowos', 'advanced packaging'],
-            "AI伺服器": ['ai server', 'high performance computing']
-        }
-        for label, keys in keywords.items():
-            if any(k in industry or k in summary for k in keys):
-                theme_label = label; theme_boost = 25.0; break
+        if any(k in industry or k in summary for k in ['semiconductor', 'asic', 'design house']):
+            theme_label = "ASIC"; theme_boost = 30.0
+        elif any(k in industry or k in summary for k in ['robot', 'automation', 'machinery']):
+            theme_label = "Robot"; theme_boost = 25.0
+        elif any(k in industry or k in summary for k in ['power', 'liquid cooling', 'thermal']):
+            theme_label = "Cooling"; theme_boost = 20.0
+        elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']):
+            theme_label = "CPO光通訊"; theme_boost = 25.0
+        elif any(k in summary or k in industry for k in ['wafer fabrication equipment', 'semiconductor equipment']):
+            theme_label = "半導體設備"; theme_boost = 20.0
+        elif any(k in summary for k in ['cowos', 'advanced packaging']):
+            theme_label = "CoWoS"; theme_boost = 25.0
+        elif any(k in summary or k in industry for k in ['ai server', 'high performance computing']):
+            theme_label = "AI伺服器"; theme_boost = 20.0
+            
     except: pass
 
     fwd_eps, trail_eps, growth_boost = 0.0, 0.0, 0.0
@@ -94,10 +94,9 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
-    # 還原所有技術指標細節
+    has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
+    is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
     ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
-    has_down_gap = any(h.iloc[i] < l.iloc[i-1] for i in range(-5, -1))
-    is_up_gap = float(l.iloc[-1]) > float(h.iloc[-2])
     is_engulfing = (c.iloc[-1] > o.iloc[-1]) and (c.iloc[-1] > o.iloc[-2]) and (c.iloc[-1] > ma5)
     high_20d = h.iloc[-20:-1].max()
     is_pullback_stop = (high_20d > c.iloc[-1] * 1.05) and (c.iloc[-1] > ma5) and (c.iloc[-1] > high_20d * 0.90)
@@ -141,18 +140,16 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
-# ====================== 3. UI 介面與主邏輯 (全功能還原) ======================
+# ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v9.0", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.0 (頻率修復還原版)")
-
-FUGLE_API_KEY = "MDVkN2NhOTgtNWE1Yi00NjhmLWIyNWMtMDFkZTA4ZmIwYzY4IDk2ZTY0ZDAzLWIyNmItNDE5My1iYTU1LTkwZmMxZjcxZWJiNA=="
-client = RestClient(api_key=FUGLE_API_KEY)
+st.title("🏹 供應鏈戰情室 v9.0 (不覆寫修正版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
 results = [] 
 
 try:
+    # 建立連線，並確保緩存時間極短，以便讀取最新雲端內容
     conn = st.connection("gsheets", type=GSheetsConnection)
 except:
     conn = None
@@ -168,12 +165,13 @@ with st.sidebar:
     st.header("💡 15% 波段實戰準則")
     st.markdown("""
     - <font color='#ffffff'>**🟣 試單佈局 → 🟡 築底加碼 → 🟢 優先重倉 → 🔵 藍燈續攻 → ⚪ 波動觀望→ 🔴 紅燈收割**</font>
-    - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小。
+    - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小，風險低。
     - <font color='#6f42c1'>**🟣 紫燈 (潛力突襲)**</font>: 成交量極縮+橫盤，變盤前夕。
     - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回檔止跌、準備二次發動。
     - <font color='#ffc107'>**🟡 黃燈 (築底觀察)**</font>: 15日漲幅近0%，剛現底部吞噬。
-    - <font color='#dc3545'>**🔴 紅燈 (警戒避開)**</font>: 15日漲幅過高(>30%)。
-    - <font color='#17a2b8'>**🔥 (動能突破)**</font> / <font color='#6f42c1'>**💰 (成長加分)**</font> / <font color='#ff4b4b'>**🎯 (價值區間)**</font> / <font color='#ffffff'>**💤 (窒息量能)**</font>
+    - <font color='#dc3545'>**🔴 紅燈 (警戒避開)**</font>: 15日漲幅過高(>30%)，防追高。
+    - <font color='#17a2b8'>**🔥 (動能突破)**</font> / <font color='#6f42c1'>**💰 (成長加分)**</font>
+    - <font color='#ff4b4b'>**🎯 (價值區間)**</font> / <font color='#ffffff'>**💤 (窒息量能)**</font>
     """, unsafe_allow_html=True)
     st.divider()
     min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 40)
@@ -185,29 +183,23 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
     
+    # 修正時區為台北時間
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-    progress_bar = st.progress(0)
-    with st.spinner('Fugle 數據連線中 (加入頻率限制保護)...'):
-        for idx, code in enumerate(raw_codes):
-            progress_bar.progress((idx + 1) / len(raw_codes), text=f"掃描中: {code}")
+    with st.spinner('掃描中...'):
+        for code in raw_codes:
             try:
-                # 頻率保護與 API 修正
-                time.sleep(0.2) 
-                raw_data = client.stock.historical.candles(
-                    symbol=code, timeframe='D', 
-                    fields="open,high,low,close,volume,turnover,change"
-                )
-                if 'candles' not in raw_data or not raw_data['candles']: continue
-                
-                df_f = pd.DataFrame(raw_data['candles'])
-                df_f['date'] = pd.to_datetime(df_f['date'])
-                df_f = df_f.set_index('date').sort_index()
-                
-                t_obj = yf.Ticker(f"{code}.TW")
-                res = analyze_stock_full(t_obj, df_f, mode, eps_threshold, code, is_manual=(code in manual_codes))
-                
+                full_code = f"{code}.TW"
+                t_obj = yf.Ticker(full_code)
+                df = t_obj.history(period="60d")
+                if df.empty:
+                    full_code = f"{code}.TWO"
+                    t_obj = yf.Ticker(full_code)
+                    df = t_obj.history(period="60d")
+                if df.empty: continue
+
+                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes))
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
@@ -216,28 +208,38 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                     if w_score < min_whale and "潛力突襲" not in risk: continue
                 
                 results.append({
-                    "時間": current_time_str, "名稱": name_map.get(code, code), "代號": code, "現價": price, 
-                    "風險": risk, "形態": pattern, "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, 
-                    "波段評分": total, "題材": theme, "連結": f"https://tw.stock.yahoo.com/quote/{code}", 
-                    "評價": status, "預估 EPS": f_eps, "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
+                    "時間": current_time_str,
+                    "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
+                    "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total, "題材": theme,
+                    "連結": f"https://tw.stock.yahoo.com/quote/{code}", "評價": status, "預估 EPS": f_eps,
+                    "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
                 })
-            except Exception as e:
-                if "429" in str(e):
-                    st.warning(f"⚠️ {code} 觸發限制，等待 5 秒後跳過..."); time.sleep(5)
-                else:
-                    st.error(f"❌ {code} 錯誤: {str(e)}")
-                continue
+            except: continue
 
 if results:
     df_new = pd.DataFrame(results)
+    
     if conn:
         try:
+            # --- 強制累加邏輯 ---
+            # 1. 讀取雲端最新的資料 (不使用緩存，確保抓到最新狀態)
             existing_df = conn.read(ttl=0) 
-            updated_df = pd.concat([existing_df, df_new], ignore_index=True).drop_duplicates(subset=['時間', '代號'], keep='last')
+            
+            if existing_df is not None and not existing_df.empty:
+                # 2. 將新資料「接在下面」
+                updated_df = pd.concat([existing_df, df_new], ignore_index=True)
+                # 3. 移除「時間與代號完全一致」的重複項，避免當下重複點擊產生的洗版
+                updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
+            else:
+                updated_df = df_new
+            
+            # 4. 把合併後的完整名單推回雲端
             conn.update(data=updated_df)
-            st.success(f"☁️ 雲端同步成功！")
-        except: pass
+            st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
+        except Exception as e:
+            st.warning(f"⚠️ 雲端同步失敗: {e}")
 
+    # 介面顯示當次結果
     df_res = df_new.sort_values("波段評分", ascending=False)
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
     
@@ -245,7 +247,8 @@ if results:
     for i, cat in enumerate(["🟣 潛力突襲", "🟡 築底觀察", "🟢 優先關注", "🔵 準備續攻", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
         with tabs[i]:
             display_df = df_res if cat == "全部" else df_res[df_res["風險"] == cat]
-            if display_df.empty: st.write(f"目前無 {cat} 標的。"); continue
+            if display_df.empty:
+                st.write(f"目前無 {cat} 標的。"); continue
 
             if view_mode == "傳統表格 (橫式)":
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
@@ -270,19 +273,31 @@ if results:
                             st.write(f"**形態:** {row['形態']}")
                             st.markdown(f"**15日漲跌:** <font color='{'#ff4b4b' if row['15日%'] > 0 else '#28a745'}'>{row['15日%']}%</font>", unsafe_allow_html=True)
                         
-                        st.progress(min(max(int(row['波段評分']), 0)/400, 1.0), text=f"綜合評分: {row['波段評分']}")
+                        st.write(f"**波段綜合評分:**")
+                        st.progress(min(max(int(row['波段評分']), 0)/400, 1.0), text=f"{row['波段評分']}")
                         
-                        with st.expander("🔍 實戰操作與評價詳情"):
+                        with st.expander("🔍 財報與價值評估詳情"):
                             st.write(f"**合理區間:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
                             st.write(f"**前一年 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
+                            
                             st.divider()
                             st.markdown("### 🏹 實戰操作建議")
                             r_type = row['風險']
-                            if "🟢" in r_type: st.success("**進場：** 🏆 核心買點。建議佈局 **40-50%**。防守 MA5。")
-                            elif "🟣" in r_type: st.write("🔮 **進場：** 底部潛伏。試單 **10-15%**。防守盤整區低點。")
-                            elif "🔵" in r_type: st.info("**進場：** 回檔二抽。補票 **20-30%**。防守 MA10。")
-                            elif "🟡" in r_type: st.warning("**進場：** 築底期。分批建立 **15-20%**。防守紅棒開盤價。")
-                            elif "🔴" in r_type: st.error("🛑 **注意：** 漲幅已高，建議收割獲利，不宜開倉。")
-                            else: st.write("⚪ **建議：** 趨勢不明，觀望為主。")
+                            if "🟢" in r_type:
+                                st.success("**進場：** 🏆 核心買點。建議佈局 **40-50%** 資金。")
+                                st.info("**防守點：** 跳空缺口下緣 或 5日均線 (MA5)。")
+                            elif "🟣" in r_type:
+                                st.write("🔮 **進場：** 底部潛伏。建議小量試單 **10-15%** 資金。")
+                                st.info("**防守點：** 近 5 日盤整區最低點。")
+                            elif "🔵" in r_type:
+                                st.info("**進場：** 回檔二抽。建議加碼或補票 **20-30%** 資金。")
+                                st.info("**防守點：** 10日均線 (MA10) 支撐位。")
+                            elif "🟡" in r_type:
+                                st.warning("**進場：** 築底期。建議分批建立基本持股 **15-20%**。")
+                                st.info("**防守點：** 底部吞噬紅棒的開盤價位置。")
+                            elif "🔴" in r_type:
+                                st.error("🛑 **注意：** 漲幅已過大，建議獲利了結，**不宜開新倉**。")
+                            else:
+                                st.write("⚪ **建議：** 趨勢不明，觀望為主。若有 🔥 標籤可考慮極短線小量參與。")
 
 else: st.write("請啟動掃描。")
