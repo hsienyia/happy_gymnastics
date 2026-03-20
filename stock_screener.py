@@ -6,14 +6,14 @@ import requests
 from datetime import datetime
 import pytz  # 用於修正時區
 from streamlit_gsheets import GSheetsConnection
-from fugle_marketdata import RestClient # 僅新增此行
+from fugle_marketdata import RestClient 
 
 # ====================== 1. 股票名稱與供應鏈資料 ======================
 @st.cache_data(ttl=86400)
 def get_reliable_name_map():
     backup_names = {
         "2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "6669": "緯穎",
-        "3017": "奇穩", "3324": "雙鴻", "3653": "健策", "2421": "建準", "2376": "技嘉",
+        "3017": "奇鋐", "3324": "雙鴻", "3653": "健策", "2421": "建準", "2376": "技嘉",
         "2454": "聯發科", "3711": "日月光投控", "3661": "世芯-KY", "3443": "創意",
         "3131": "弘塑", "3583": "辛耘", "3680": "家登", "1560": "中砂", "6187": "萬潤",
         "3035": "智原", "6643": "M31", "6462": "神盾", "6533": "晶心科",
@@ -49,9 +49,10 @@ def get_supply_chain_db():
 # ====================== 2. 核心分析邏輯 ======================
 def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False):
     if mode == "盤後定型分析" and len(df) > 1: df = df.iloc[:-1]
-    if len(df) < 40: return None
+    if len(df) < 30: return None # 放寬天數門檻以利抓取
     
-    # 富果欄位轉換 (lowercase)
+    # 強制欄位名稱與格式
+    df.columns = [col.lower() for col in df.columns]
     c, l, h, o, v = df['close'], df['low'], df['high'], df['open'], df['volume']
     
     theme_label, theme_boost = "", 0.0
@@ -76,7 +77,6 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
             theme_label = "CoWoS"; theme_boost = 25.0
         elif any(k in summary or k in industry for k in ['ai server', 'high performance computing']):
             theme_label = "AI伺服器"; theme_boost = 20.0
-            
     except: pass
 
     fwd_eps, trail_eps, growth_boost = 0.0, 0.0, 0.0
@@ -97,6 +97,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
+    # 技術指標
     has_down_gap = any(h.iloc[i] < l.iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(l.iloc[-1]) > float(h.iloc[-2])
     ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
@@ -112,7 +113,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     pattern, p_score = "趨勢追蹤", 0.0
     if has_down_gap and is_up_gap: pattern, p_score = "🏝️ 島狀反轉", 90.0
     elif is_pullback_stop: pattern, p_score = "🚀 準備續攻", 75.0 
-    elif is_engulfing: pattern, p_score = "磚 底部吞噬", 45.0
+    elif is_engulfing: pattern, p_score = "🧱 底部吞噬", 45.0
     
     extra_boost = 25.0 if (is_vol_burst and is_breakthrough) else 0.0
     if extra_boost: pattern = "🔥 動能突破" if pattern == "趨勢追蹤" else f"{pattern}+🔥"
@@ -147,9 +148,8 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 st.set_page_config(page_title="戰情室 v9.0", layout="wide")
 st.title("🏹 供應鏈戰情室 v9.0 (不覆寫修正版)")
 
-# 富果 API 金鑰
 FUGLE_API_KEY = "MDVkN2NhOTgtNWE1Yi00NjhmLWIyNWMtMDFkZTA4ZmIwYzY4IDk2ZTY0ZDAzLWIyNmItNDE5My1iYTU1LTkwZmMxZjcxZWJiNA=="
-fugle_client = RestClient(api_key=FUGLE_API_KEY)
+client = RestClient(api_key=FUGLE_API_KEY)
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -192,15 +192,23 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-    with st.spinner('掃描中...'):
+    with st.spinner('Fugle 數據連線中...'):
         for code in raw_codes:
             try:
-                # 僅更換此處抓取邏輯為富果
-                df_fugle = pd.DataFrame(fugle_client.stock.historical.candles(symbol=code, timeframe='d', fields=['open', 'high', 'low', 'close', 'volume']))
-                if df_fugle.empty: continue
+                # 關鍵修正：使用富果 API 獲取數據
+                stock = client.stock
+                data = stock.historical.candles(symbol=code, timeframe='d', fields=['open', 'high', 'low', 'close', 'volume'])
+                df_f = pd.DataFrame(data)
+                
+                if df_f.empty: continue
+                
+                # 格式對齊
+                df_f['date'] = pd.to_datetime(df_f['date'])
+                df_f = df_f.set_index('date').sort_index()
                 
                 t_obj = yf.Ticker(f"{code}.TW")
-                res = analyze_stock_full(t_obj, df_fugle, mode, eps_threshold, code, is_manual=(code in manual_codes))
+                res = analyze_stock_full(t_obj, df_f, mode, eps_threshold, code, is_manual=(code in manual_codes))
+                
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
@@ -215,7 +223,10 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                     "連結": f"https://tw.stock.yahoo.com/quote/{code}", "評價": status, "預估 EPS": f_eps,
                     "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
                 })
-            except: continue
+            except Exception as e:
+                # 若出錯，會在 Streamlit 畫面提示以便除錯
+                st.error(f"❌ {code} 掃描錯誤: {str(e)}")
+                continue
 
 if results:
     df_new = pd.DataFrame(results)
