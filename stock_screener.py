@@ -174,7 +174,7 @@ with st.sidebar:
     - <font color='#ff4b4b'>**🎯 (價值區間)**</font> / <font color='#ffffff'>**💤 (窒息量能)**</font>
     """, unsafe_allow_html=True)
     st.divider()
-    min_whale = st.slider("主力吸籌門檻 ((Whale))", 0, 100, 40)
+    min_whale = st.slider("主力吸籌門檻 (🐋)", 0, 100, 40)
     bottom_only = st.checkbox("僅顯示形態確立股", value=True)
     eps_threshold = st.slider("📈 EPS 成長門檻", 1.0, 5.0, 1.7, 0.1)
 
@@ -198,7 +198,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                 results.append({
                     "時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
-                    "吸籌力(Whale)": w_score, "5日%": r5, "15日%": r15, "評分": total, "題材": theme,
+                    "吸籌力🐋": w_score, "5日%": r5, "15日%": r15, "評分": total, "題材": theme,
                     "評價": status, "預估EPS": f_eps, "合理價": fair_range
                 })
             except: continue
@@ -206,23 +206,21 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
 if results:
     df_new = pd.DataFrame(results)
     
-    # ================= 雲端同步邏輯 (對齊修正版) =================
+    # ================= 雲端同步邏輯 =================
     if conn:
         try:
-            # 這裡必須向右縮進 8 個空格 (屬於 if 內的 try)
+            # 讀取現有的雲端資料
             existing_data = conn.read(worksheet="Sheet1")
-            updated_df = pd.concat([existing_data, df_new], ignore_index=True)
-            updated_df = updated_df.drop_duplicates(subset=['時間', '代號'])
-            
-            # 執行更新
+            # 合併新舊資料
+            updated_df = pd.concat([existing_data, df_new], ignore_index=True).drop_duplicates(subset=['時間', '代號'])
+            # 寫回 Google Sheets
             conn.update(worksheet="Sheet1", data=updated_df)
-            st.success("☁️ 雲端同步成功！數據已累加至 Google Sheets。")
+            st.success("☁️ 雲端同步成功！已更新至 Google Sheets。")
         except Exception as e:
-            # 這裡也要對齊
             st.warning(f"⚠️ 雲端同步暫時失敗 (請確認 Secrets 設定): {e}")
 
-    # 接下來是原本的顯示邏輯 (與 if conn 平級，縮進 4 個空格)
     df_res = df_new.sort_values("評分", ascending=False)
+    # ... (後續卡片顯示代碼與之前相同)
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
     tabs = st.tabs(["🟣 突襲", "🟡 築底", "🟢 優先", "🔵 續攻", "⚪ 一般", "🔴 警戒", "⭐ 全部"])
     for i, cat in enumerate(["🟣 潛力突襲", "🟡 築底觀察", "🟢 優先關注", "🔵 準備續攻", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
@@ -246,7 +244,7 @@ if results:
                         col_l, col_r = st.columns(2)
                         with col_l:
                             st.write(f"**現價:** `{row['現價']}`")
-                            st.write(f"**吸籌力:** `{row['吸籌力(Whale)']}`")
+                            st.write(f"**吸籌力:** `{row['吸籌力🐋']}`")
                             st.markdown(f"**5日漲跌:** {row['5日%']}%")
                         with col_r:
                             st.write(f"**評價:** `{row['評價']}`")
