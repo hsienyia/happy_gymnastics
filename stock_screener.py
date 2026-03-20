@@ -142,13 +142,14 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v9.0", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.0 (時區修正累加版)")
+st.title("🏹 供應鏈戰情室 v9.0 (不覆寫修正版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
 results = [] 
 
 try:
+    # 建立連線，並確保緩存時間極短，以便讀取最新雲端內容
     conn = st.connection("gsheets", type=GSheetsConnection)
 except:
     conn = None
@@ -220,27 +221,25 @@ if results:
     
     if conn:
         try:
-            # --- 核心修正：強制執行「先讀再寫」邏輯 ---
-            try:
-                # 1. 讀取現有雲端資料
-                existing_data = conn.read()
-                if existing_data is not None and not existing_data.empty:
-                    # 2. 強制合併：將新結果串接在現有資料下方
-                    updated_df = pd.concat([existing_data, df_new], ignore_index=True)
-                    # 3. 過濾：只刪除完全重複的（同秒且同代號）
-                    updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
-                else:
-                    updated_df = df_new
-            except:
-                # 若讀取失敗（例如表單是空的），則直接使用新資料
+            # --- 強制累加邏輯 ---
+            # 1. 讀取雲端最新的資料 (不使用緩存，確保抓到最新狀態)
+            existing_df = conn.read(ttl=0) 
+            
+            if existing_df is not None and not existing_df.empty:
+                # 2. 將新資料「接在下面」
+                updated_df = pd.concat([existing_df, df_new], ignore_index=True)
+                # 3. 移除「時間與代號完全一致」的重複項，避免當下重複點擊產生的洗版
+                updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
+            else:
                 updated_df = df_new
             
-            # 4. 整份推回雲端 (透過先讀後寫，達成累加效果)
+            # 4. 把合併後的完整名單推回雲端
             conn.update(data=updated_df)
-            st.success(f"☁️ 雲端同步完成 (台北時間: {df_new['時間'].iloc[0]})")
+            st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
         except Exception as e:
             st.warning(f"⚠️ 雲端同步失敗: {e}")
 
+    # 介面顯示當次結果
     df_res = df_new.sort_values("波段評分", ascending=False)
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
     
