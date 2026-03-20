@@ -4,7 +4,7 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 import requests
 from datetime import datetime
-import pytz  # 用於修正時區
+import pytz  
 from streamlit_gsheets import GSheetsConnection
 from fugle_marketdata import RestClient 
 
@@ -51,7 +51,6 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     if mode == "盤後定型分析" and len(df) > 1: df = df.iloc[:-1]
     if len(df) < 30: return None
     
-    # 強制對應富果欄位
     c, l, h, o, v = df['close'], df['low'], df['high'], df['open'], df['volume']
     
     theme_label, theme_boost = "", 0.0
@@ -76,7 +75,6 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
             theme_label = "CoWoS"; theme_boost = 25.0
         elif any(k in summary or k in industry for k in ['ai server', 'high performance computing']):
             theme_label = "AI伺服器"; theme_boost = 20.0
-            
     except: pass
 
     fwd_eps, trail_eps, growth_boost = 0.0, 0.0, 0.0
@@ -97,9 +95,10 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
+    # 技術指標
+    ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
     has_down_gap = any(h.iloc[i] < l.iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(l.iloc[-1]) > float(h.iloc[-2])
-    ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
     is_engulfing = (c.iloc[-1] > o.iloc[-1]) and (c.iloc[-1] > o.iloc[-2]) and (c.iloc[-1] > ma5)
     high_20d = h.iloc[-20:-1].max()
     is_pullback_stop = (high_20d > c.iloc[-1] * 1.05) and (c.iloc[-1] > ma5) and (c.iloc[-1] > high_20d * 0.90)
@@ -147,7 +146,6 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 st.set_page_config(page_title="戰情室 v9.0", layout="wide")
 st.title("🏹 供應鏈戰情室 v9.0 (不覆寫修正版)")
 
-# 富果 API 金鑰與客戶端
 FUGLE_API_KEY = "MDVkN2NhOTgtNWE1Yi00NjhmLWIyNWMtMDFkZTA4ZmIwYzY4IDk2ZTY0ZDAzLWIyNmItNDE5My1iYTU1LTkwZmMxZjcxZWJiNA=="
 client = RestClient(api_key=FUGLE_API_KEY)
 
@@ -195,20 +193,16 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     with st.spinner('Fugle 數據抓取中...'):
         for code in raw_codes:
             try:
-                # 核心修正：滿足富果 API 參數要求
-                stock = client.stock
-                # 1. timeframe 必須大寫 'D'
-                # 2. fields 必須包含所有必要欄位
-                data = stock.historical.candles(
+                # 關鍵修正：fields 改用字串格式傳遞，避免 URL 編碼錯誤
+                data = client.stock.historical.candles(
                     symbol=code, 
                     timeframe='D', 
-                    fields=['open', 'high', 'low', 'close', 'volume', 'turnover', 'change']
+                    fields="open,high,low,close,volume,turnover,change"
                 )
                 df_f = pd.DataFrame(data)
                 
                 if df_f.empty: continue
                 
-                # 格式轉換
                 df_f['date'] = pd.to_datetime(df_f['date'])
                 df_f = df_f.set_index('date').sort_index()
                 
@@ -218,10 +212,6 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
-                if code not in manual_codes:
-                    if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
-                    if w_score < min_whale and "潛力突襲" not in risk: continue
-                
                 results.append({
                     "時間": current_time_str,
                     "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
@@ -230,7 +220,6 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                     "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
                 })
             except Exception as e:
-                # 在介面上顯示具體錯誤，方便第一時間抓蟲
                 st.error(f"❌ {code} 掃描錯誤: {str(e)}")
                 continue
 
