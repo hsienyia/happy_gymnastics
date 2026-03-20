@@ -4,6 +4,7 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 import requests
 from datetime import datetime
+import pytz  # 用於修正時區
 from streamlit_gsheets import GSheetsConnection
 
 # ====================== 1. 股票名稱與供應鏈資料 ======================
@@ -141,7 +142,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v9.0", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.0 (代號自動修正版)")
+st.title("🏹 供應鏈戰情室 v9.0 (時區修正累加版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -180,33 +181,33 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     raw_codes = chains[selected_chain].copy()
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
+    
+    # 修正時區為台北時間
+    tw_tz = pytz.timezone('Asia/Taipei')
+    current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
+
     with st.spinner('掃描中...'):
         for code in raw_codes:
             try:
-                # --- 自動修正上市/上櫃後綴 ---
-                # 先試上市公司 (.TW)
                 full_code = f"{code}.TW"
                 t_obj = yf.Ticker(full_code)
                 df = t_obj.history(period="60d")
-                
-                # 如果沒資料，換上櫃公司 (.TWO) 試試
                 if df.empty:
                     full_code = f"{code}.TWO"
                     t_obj = yf.Ticker(full_code)
                     df = t_obj.history(period="60d")
-                
                 if df.empty: continue
-                # -----------------------------
 
                 res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes))
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
+                
                 if code not in manual_codes:
                     if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
                     if w_score < min_whale and "潛力突襲" not in risk: continue
                 
                 results.append({
-                    "時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "時間": current_time_str,
                     "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
                     "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total, "題材": theme,
                     "連結": f"https://tw.stock.yahoo.com/quote/{code}", "評價": status, "預估 EPS": f_eps,
@@ -219,17 +220,22 @@ if results:
     
     if conn:
         try:
+            # 讀取現有資料
             try:
                 existing_data = conn.read()
                 if existing_data is not None and not existing_data.empty:
+                    # 合併資料，新掃描的放在下面
                     updated_df = pd.concat([existing_data, df_new], ignore_index=True)
-                    updated_df = updated_df.drop_duplicates(subset=['時間', '代號'])
+                    # 只移除完全重複的掃描（同時間且同代號）
+                    updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
                 else:
                     updated_df = df_new
             except:
                 updated_df = df_new
+            
+            # 更新到雲端
             conn.update(data=updated_df)
-            st.success("☁️ 雲端同步完成")
+            st.success(f"☁️ 雲端同步完成 (台北時間: {df_new['時間'].iloc[0]})")
         except Exception as e:
             st.warning(f"⚠️ 雲端同步失敗: {e}")
 
