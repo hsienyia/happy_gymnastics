@@ -194,7 +194,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
             progress_bar.progress((idx + 1) / len(raw_codes), text=f"掃描中: {code}")
             try:
                 # 頻率保護與 API 修正
-                time.sleep(1.2) 
+                time.sleep(0.2) 
                 raw_data = client.stock.historical.candles(
                     symbol=code, timeframe='D', 
                     fields="open,high,low,close,volume,turnover,change"
