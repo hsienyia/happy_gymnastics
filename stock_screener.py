@@ -57,20 +57,20 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
         industry = info.get('industry', '').lower()
         summary = info.get('longBusinessSummary', '').lower()
         
-        # 題材自動判定邏輯更新區 (v9.0 新增)
+        # 題材自動判定邏輯更新區
         if any(k in industry or k in summary for k in ['semiconductor', 'asic', 'design house']):
             theme_label = "ASIC"; theme_boost = 30.0
         elif any(k in industry or k in summary for k in ['robot', 'automation', 'machinery']):
             theme_label = "Robot"; theme_boost = 25.0
         elif any(k in industry or k in summary for k in ['power', 'liquid cooling', 'thermal']):
             theme_label = "Cooling"; theme_boost = 20.0
-        elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication', 'optical fiber']):
+        elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']):
             theme_label = "CPO光通訊"; theme_boost = 25.0
-        elif any(k in summary or k in industry for k in ['wafer fabrication equipment', 'semiconductor equipment', 'cleaning equipment']):
+        elif any(k in summary or k in industry for k in ['wafer fabrication equipment', 'semiconductor equipment']):
             theme_label = "半導體設備"; theme_boost = 20.0
-        elif any(k in summary for k in ['cowos', 'advanced packaging', '2.5d', '3d packaging']):
+        elif any(k in summary for k in ['cowos', 'advanced packaging']):
             theme_label = "CoWoS"; theme_boost = 25.0
-        elif any(k in summary or k in industry for k in ['ai server', 'high performance computing', 'hpc server']):
+        elif any(k in summary or k in industry for k in ['ai server', 'high performance computing']):
             theme_label = "AI伺服器"; theme_boost = 20.0
             
     except: pass
@@ -143,7 +143,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v9.0", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.0 (手機勳章版)")
+st.title("🏹 供應鏈戰情室 v9.0 (進場邏輯版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -239,5 +239,26 @@ if results:
                         with st.expander("🔍 財報與價值評估詳情"):
                             st.write(f"**合理區間:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
                             st.write(f"**前一年 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
+                            
+                            # ================= 進場邏輯顯示區 =================
+                            st.divider()
+                            st.markdown("### 🏹 實戰操作建議")
+                            r_type = row['風險']
+                            if "🟢" in r_type:
+                                st.success("**進場：** 🏆 核心買點。建議佈局 **40-50%** 資金。")
+                                st.info("**防守點：** 跳空缺口下緣 或 5日均線 (MA5)。")
+                            elif "🟣" in r_type:
+                                st.write("🔮 **進場：** 底部潛伏。建議小量試單 **10-15%** 資金。")
+                                st.info("**防守點：** 近 5 日盤整區最低點。")
+                            elif "🔵" in r_type:
+                                st.info("**進場：** 回檔二抽。建議加碼或補票 **20-30%** 資金。")
+                                st.info("**防守點：** 10日均線 (MA10) 支撐位。")
+                            elif "🟡" in r_type:
+                                st.warning("**進場：** 築底期。建議分批建立基本持股 **15-20%**。")
+                                st.info("**防守點：** 底部吞噬紅棒的開盤價位置。")
+                            elif "🔴" in r_type:
+                                st.error("🛑 **注意：** 漲幅已過大，建議獲利了結，**不宜開新倉**。")
+                            else:
+                                st.write("⚪ **建議：** 趨勢不明，觀望為主。若有 🔥 標籤可考慮極短線小量參與。")
 
 else: st.write("請啟動掃描。")
