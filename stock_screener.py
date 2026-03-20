@@ -246,7 +246,7 @@ if results:
                         col_l, col_r = st.columns(2)
                         with col_l:
                             st.write(f"**現價:** `{row['現價']}`")
-                            st.write(f"**吸籌力:** `{row['吸籌力🐋']}`")
+                            st.write(f"**吸籌力:** `{row['吸籌力(Whale)']}`")
                             st.markdown(f"**5日漲跌:** {row['5日%']}%")
                         with col_r:
                             st.write(f"**評價:** `{row['評價']}`")
