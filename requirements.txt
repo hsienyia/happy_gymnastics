@@ -6,3 +6,4 @@ requests
 lxml
 st-gsheets-connection
 xlsxwriter
+fugle-marketdata
