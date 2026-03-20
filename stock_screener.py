@@ -4,7 +4,6 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 import requests
 from datetime import datetime
-# 引入 Google Sheets 聯網套件
 from streamlit_gsheets import GSheetsConnection
 
 # ====================== 1. 股票名稱與供應鏈資料 ======================
@@ -142,16 +141,15 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v9.0", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.0 (雲端同步版)")
+st.title("🏹 供應鏈戰情室 v9.0 (代號自動修正版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
 results = [] 
 
-# 初始化 Google Sheets 連線 (需在 Secrets 設定網址)
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-except Exception as e:
+except:
     conn = None
 
 with st.sidebar:
@@ -185,10 +183,21 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     with st.spinner('掃描中...'):
         for code in raw_codes:
             try:
-                full_code = code + (".TW" if int(code) < 5000 else ".TWO")
+                # --- 自動修正上市/上櫃後綴 ---
+                # 先試上市公司 (.TW)
+                full_code = f"{code}.TW"
                 t_obj = yf.Ticker(full_code)
                 df = t_obj.history(period="60d")
+                
+                # 如果沒資料，換上櫃公司 (.TWO) 試試
+                if df.empty:
+                    full_code = f"{code}.TWO"
+                    t_obj = yf.Ticker(full_code)
+                    df = t_obj.history(period="60d")
+                
                 if df.empty: continue
+                # -----------------------------
+
                 res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes))
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
@@ -196,7 +205,6 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                     if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
                     if w_score < min_whale and "潛力突襲" not in risk: continue
                 
-                # 欄位保持原樣，增加「時間」以便雲端累加
                 results.append({
                     "時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
@@ -209,10 +217,8 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
 if results:
     df_new = pd.DataFrame(results)
     
-    # ================= 雲端同步邏輯 =================
     if conn:
         try:
-            # 1. 嘗試讀取（若全空會跳到 except）
             try:
                 existing_data = conn.read()
                 if existing_data is not None and not existing_data.empty:
@@ -222,10 +228,8 @@ if results:
                     updated_df = df_new
             except:
                 updated_df = df_new
-            
-            # 2. 寫回 Google Sheets
             conn.update(data=updated_df)
-            st.success("☁️ 雲端同步成功！已累加至 Google Sheets。")
+            st.success("☁️ 雲端同步完成")
         except Exception as e:
             st.warning(f"⚠️ 雲端同步失敗: {e}")
 
