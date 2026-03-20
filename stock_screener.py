@@ -208,16 +208,18 @@ if results:
     
     # ================= 雲端同步邏輯 =================
     if conn:
-        try:
-            # 讀取現有的雲端資料
-            existing_data = conn.read(worksheet="Sheet1")
-            # 合併新舊資料
-            updated_df = pd.concat([existing_data, df_new], ignore_index=True).drop_duplicates(subset=['時間', '代號'])
-            # 寫回 Google Sheets
-            conn.update(worksheet="Sheet1", data=updated_df)
-            st.success("☁️ 雲端同步成功！已更新至 Google Sheets。")
-        except Exception as e:
-            st.warning(f"⚠️ 雲端同步暫時失敗 (請確認 Secrets 設定): {e}")
+    try:
+        # 1. 嘗試讀取（測試權限與網址）
+        existing_data = conn.read() 
+        
+        # 2. 合併資料
+        updated_df = pd.concat([existing_data, df_new], ignore_index=True)
+        
+        # 3. 寫入資料（測試格式）
+        conn.update(data=updated_df)
+        st.success("☁️ 雲端同步成功！")
+    except Exception as e:
+        st.error(f"❌ 偵錯訊息：{str(e)}") # 這裡會顯示更詳細的錯誤原因
 
     df_res = df_new.sort_values("評分", ascending=False)
     # ... (後續卡片顯示代碼與之前相同)
