@@ -47,7 +47,12 @@ def get_supply_chain_db():
 
 # ====================== 2. 核心分析邏輯 ======================
 def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False):
-    if mode == "盤後定型分析" and len(df) > 1: df = df.iloc[:-1]
+    # 根據模式調整數據長度
+    if mode == "盤後定型分析" and len(df) > 1: 
+        df = df.iloc[:-1]
+    elif mode == "前一交易日分析" and len(df) > 2:
+        df = df.iloc[:-2] # 移除當前最新的兩天，回到前一個收盤日
+        
     if len(df) < 40: return None
     c, l, h, o, v = df['Close'], df['Low'], df['High'], df['Open'], df['Volume']
     
@@ -141,8 +146,8 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
 # ====================== 3. UI 介面 ======================
-st.set_page_config(page_title="戰情室 v9.0", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.0 (不覆寫修正版)")
+st.set_page_config(page_title="戰情室 v9.1.2", layout="wide")
+st.title("🏹 供應鏈戰情室 v9.1.2 (前後分析版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -155,7 +160,8 @@ except:
 
 with st.sidebar:
     st.header("⚙️ 掃描設定")
-    mode = st.radio("📊 數據模式", ["盤中即時偵測", "盤後定型分析"])
+    # 此處新增了「前一交易日分析」選項
+    mode = st.radio("📊 數據模式", ["盤中即時偵測", "盤後定型分析", "前一交易日分析"])
     selected_chain = st.selectbox("選擇預設供應鏈", list(chains.keys()))
     custom_input = st.text_input("➕ 手動新增標的", placeholder="例如: 3661, 2308")
     st.divider()
@@ -182,42 +188,33 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
     
-    # 修正時區為台北時間
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
     with st.spinner('掃描中...'):
-        # 【效能優化點 1】: 預先生成所有 Yahoo 股票代號清單
+        # 效能優化：預先組合所有可能的 Yahoo 代碼
         tickers_list = []
         for c in raw_codes:
-            # 這裡先預設 .TW，若找不到會在批次下載後處理 (或者依序加入 .TW 和 .TWO)
-            tickers_list.append(f"{c}.TW")
-            tickers_list.append(f"{c}.TWO")
+            tickers_list.extend([f"{c}.TW", f"{c}.TWO"])
         
-        # 【效能優化點 2】: 批次下載 60 天歷史 K 線 (yf.download 遠快於 Ticker.history)
-        all_data = yf.download(tickers_list, period="60d", group_by='ticker', threads=True, progress=False)
+        # 效能優化：批次下載 K 線
+        all_data = yf.download(tickers_list, period="70d", group_by='ticker', threads=True, progress=False)
 
         for code in raw_codes:
             try:
-                # 取得該股票的 DataFrame
                 df = all_data[f"{code}.TW"]
-                full_code_used = f"{code}.TW"
-                # 如果 .TW 沒資料，嘗試 .TWO
+                f_code = f"{code}.TW"
                 if df.empty or df['Close'].isnull().all():
                     df = all_data[f"{code}.TWO"]
-                    full_code_used = f"{code}.TWO"
+                    f_code = f"{code}.TWO"
                 
                 if df.empty or df['Close'].isnull().all(): continue
-                
-                # 移除包含 NaN 的行 (yf.download 在批次下載時會產生一些空行)
                 df = df.dropna(subset=['Close'])
                 
-                # 因為 analyze_stock_full 仍需要 ticker_obj 來拿 info (EPS 等資訊)
-                # info 必須透過 Ticker 物件拿，無法批次，但歷史數據已經在上面拿好了
-                t_obj = yf.Ticker(full_code_used)
-
+                t_obj = yf.Ticker(f_code)
                 res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes))
                 if not res: continue
+                
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
                 if code not in manual_codes:
@@ -235,7 +232,6 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
 
 if results:
     df_new = pd.DataFrame(results)
-    
     if conn:
         try:
             existing_df = conn.read(ttl=0) 
