@@ -149,7 +149,6 @@ chains = get_supply_chain_db()
 results = [] 
 
 try:
-    # 建立連線，並確保緩存時間極短，以便讀取最新雲端內容
     conn = st.connection("gsheets", type=GSheetsConnection)
 except:
     conn = None
@@ -188,16 +187,34 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
     with st.spinner('掃描中...'):
+        # 【效能優化點 1】: 預先生成所有 Yahoo 股票代號清單
+        tickers_list = []
+        for c in raw_codes:
+            # 這裡先預設 .TW，若找不到會在批次下載後處理 (或者依序加入 .TW 和 .TWO)
+            tickers_list.append(f"{c}.TW")
+            tickers_list.append(f"{c}.TWO")
+        
+        # 【效能優化點 2】: 批次下載 60 天歷史 K 線 (yf.download 遠快於 Ticker.history)
+        all_data = yf.download(tickers_list, period="60d", group_by='ticker', threads=True, progress=False)
+
         for code in raw_codes:
             try:
-                full_code = f"{code}.TW"
-                t_obj = yf.Ticker(full_code)
-                df = t_obj.history(period="60d")
-                if df.empty:
-                    full_code = f"{code}.TWO"
-                    t_obj = yf.Ticker(full_code)
-                    df = t_obj.history(period="60d")
-                if df.empty: continue
+                # 取得該股票的 DataFrame
+                df = all_data[f"{code}.TW"]
+                full_code_used = f"{code}.TW"
+                # 如果 .TW 沒資料，嘗試 .TWO
+                if df.empty or df['Close'].isnull().all():
+                    df = all_data[f"{code}.TWO"]
+                    full_code_used = f"{code}.TWO"
+                
+                if df.empty or df['Close'].isnull().all(): continue
+                
+                # 移除包含 NaN 的行 (yf.download 在批次下載時會產生一些空行)
+                df = df.dropna(subset=['Close'])
+                
+                # 因為 analyze_stock_full 仍需要 ticker_obj 來拿 info (EPS 等資訊)
+                # info 必須透過 Ticker 物件拿，無法批次，但歷史數據已經在上面拿好了
+                t_obj = yf.Ticker(full_code_used)
 
                 res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes))
                 if not res: continue
@@ -221,25 +238,17 @@ if results:
     
     if conn:
         try:
-            # --- 強制累加邏輯 ---
-            # 1. 讀取雲端最新的資料 (不使用緩存，確保抓到最新狀態)
             existing_df = conn.read(ttl=0) 
-            
             if existing_df is not None and not existing_df.empty:
-                # 2. 將新資料「接在下面」
                 updated_df = pd.concat([existing_df, df_new], ignore_index=True)
-                # 3. 移除「時間與代號完全一致」的重複項，避免當下重複點擊產生的洗版
                 updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
             else:
                 updated_df = df_new
-            
-            # 4. 把合併後的完整名單推回雲端
             conn.update(data=updated_df)
             st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
         except Exception as e:
             st.warning(f"⚠️ 雲端同步失敗: {e}")
 
-    # 介面顯示當次結果
     df_res = df_new.sort_values("波段評分", ascending=False)
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
     
