@@ -46,12 +46,12 @@ def get_supply_chain_db():
     return {"💎 核心標的總匯 (ALL)": list(set(all_codes)), **base_chains}
 
 # ====================== 2. 核心分析邏輯 ======================
-def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False):
-    # 根據模式調整數據長度
-    if mode == "盤後定型分析" and len(df) > 1: 
+def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0):
+    # 處理手動回測天數與模式邏輯
+    if backtest_days > 0:
+        df = df.iloc[:-backtest_days]
+    elif mode == "盤後定型分析" and len(df) > 1: 
         df = df.iloc[:-1]
-    elif mode == "前一交易日分析" and len(df) > 2:
-        df = df.iloc[:-2] # 移除當前最新的兩天，回到前一個收盤日
         
     if len(df) < 40: return None
     c, l, h, o, v = df['Close'], df['Low'], df['High'], df['Open'], df['Volume']
@@ -160,8 +160,10 @@ except:
 
 with st.sidebar:
     st.header("⚙️ 掃描設定")
-    # 此處新增了「前一交易日分析」選項
-    mode = st.radio("📊 數據模式", ["盤中即時偵測", "盤後定型分析", "前一交易日分析"])
+    mode = st.radio("📊 數據模式", ["盤中即時偵測", "盤後定型分析"])
+    # 新增手動回測天數選項
+    backtest_days = st.number_input("🔢 手動回溯交易日 (0為最新)", min_value=0, max_value=30, value=0, step=1)
+    
     selected_chain = st.selectbox("選擇預設供應鏈", list(chains.keys()))
     custom_input = st.text_input("➕ 手動新增標的", placeholder="例如: 3661, 2308")
     st.divider()
@@ -188,33 +190,35 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
     
+    # 修正時區為台北時間
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
     with st.spinner('掃描中...'):
-        # 效能優化：預先組合所有可能的 Yahoo 代碼
+        # 效能優化：批次下載
         tickers_list = []
         for c in raw_codes:
-            tickers_list.extend([f"{c}.TW", f"{c}.TWO"])
+            tickers_list.append(f"{c}.TW")
+            tickers_list.append(f"{c}.TWO")
         
-        # 效能優化：批次下載 K 線
-        all_data = yf.download(tickers_list, period="70d", group_by='ticker', threads=True, progress=False)
+        all_data = yf.download(tickers_list, period="90d", group_by='ticker', threads=True, progress=False)
 
         for code in raw_codes:
             try:
                 df = all_data[f"{code}.TW"]
-                f_code = f"{code}.TW"
+                full_code_used = f"{code}.TW"
                 if df.empty or df['Close'].isnull().all():
                     df = all_data[f"{code}.TWO"]
-                    f_code = f"{code}.TWO"
+                    full_code_used = f"{code}.TWO"
                 
                 if df.empty or df['Close'].isnull().all(): continue
                 df = df.dropna(subset=['Close'])
                 
-                t_obj = yf.Ticker(f_code)
-                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes))
+                t_obj = yf.Ticker(full_code_used)
+
+                # 傳入手動回溯天數參數
+                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days)
                 if not res: continue
-                
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
                 if code not in manual_codes:
@@ -232,6 +236,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
 
 if results:
     df_new = pd.DataFrame(results)
+    
     if conn:
         try:
             existing_df = conn.read(ttl=0) 
