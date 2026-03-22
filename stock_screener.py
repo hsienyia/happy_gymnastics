@@ -34,16 +34,20 @@ def get_reliable_name_map():
 
 def get_supply_chain_db():
     base_chains = {
-        "ASIC 與 高速傳輸": ["3661", "3443", "3035", "6643", "6533", "6462", "4966", "5269", "6756"],
-        "AI 記憶體 (HBM/旺宏)": ["2337", "2344", "2408", "3260", "8299", "6239", "5289", "8271"],
-        "實體 AI (機器人/具身)": ["2317", "2049", "4576", "2395", "6166", "1590", "1536", "8033", "2356", "1504", "2308"],
-        "輝達 (NVIDIA) 供應鏈": ["2330", "2317", "2382", "3231", "6669", "3017", "3324", "3653", "2421", "2376", "2454", "3711", "3661", "3443"],
-        "台積電 (TSMC) 大聯盟": ["3131", "3583", "3680", "1560", "6187", "6438", "3413", "8027", "6515", "2404", "1717", "4755"],
-        "美股四大巨頭 (MAGMA)": ["2345", "6274", "2368", "2383", "3037", "8046", "3515", "4966", "2308", "6515"]
+        "💎 核心標的總匯 (ALL)": [], # 程式會自動彙整
+        "🔥 CoWoS/先進封裝設備": ["6187", "3131", "3583", "3680", "1560", "2404", "6640", "6438", "3413"],
+        "📡 CPO 矽光子/光通訊": ["3363", "4979", "3081", "3450", "3163", "6451", "4908", "6442", "2345"],
+        "🤖 機器人/具身智能": ["2359", "2049", "4576", "2395", "6166", "1590", "8358", "8033", "2365"],
+        "❄️ GB200 散熱/水冷牆": ["3017", "3324", "3653", "2421", "3013", "3483", "6124"],
+        "⚙️ ASIC/高階伺服器": ["3661", "3443", "3035", "6643", "2382", "3231", "6669", "2317"],
+        "🔋 能源管理/強韌電網": ["1503", "1504", "1513", "1519", "1605", "1608", "1609"]
     }
+    # 自動合併所有代碼到 ALL
     all_codes = []
-    for codes in base_chains.values(): all_codes.extend(codes)
-    return {"💎 核心標的總匯 (ALL)": list(set(all_codes)), **base_chains}
+    for k, v in base_chains.items():
+        if k != "💎 核心標的總匯 (ALL)": all_codes.extend(v)
+    base_chains["💎 核心標的總匯 (ALL)"] = list(set(all_codes))
+    return base_chains
 
 # ====================== 2. 核心分析邏輯 ======================
 def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0):
@@ -64,20 +68,19 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
         industry = info.get('industry', '').lower()
         summary = info.get('longBusinessSummary', '').lower()
         
-        if any(k in industry or k in summary for k in ['semiconductor', 'asic', 'design house']):
-            theme_label = "ASIC"; theme_boost = 30.0
-        elif any(k in industry or k in summary for k in ['robot', 'automation', 'machinery']):
-            theme_label = "Robot"; theme_boost = 25.0
-        elif any(k in industry or k in summary for k in ['power', 'liquid cooling', 'thermal']):
-            theme_label = "Cooling"; theme_boost = 20.0
+        # 根據 2026/03 最新盤勢調整題材加分
+        if any(k in summary or k in industry for k in ['cowos', 'advanced packaging']):
+            theme_label = "CoWoS/先進封裝"; theme_boost = 35.0  # 最高加分，反映目前萬潤熱度
         elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']):
-            theme_label = "CPO光通訊"; theme_boost = 25.0
-        elif any(k in summary or k in industry for k in ['wafer fabrication equipment', 'semiconductor equipment']):
-            theme_label = "半導體設備"; theme_boost = 20.0
-        elif any(k in summary for k in ['cowos', 'advanced packaging']):
-            theme_label = "CoWoS"; theme_boost = 25.0
+            theme_label = "CPO 矽光子"; theme_boost = 30.0    # 資金新寵兒
+        elif any(k in summary or k in industry for k in ['robot', 'automation', 'machinery']):
+            theme_label = "機器人系統"; theme_boost = 25.0    # 具身智能熱點
+        elif any(k in summary or k in industry for k in ['liquid cooling', 'thermal', 'power']):
+            theme_label = "GB200 水冷散熱"; theme_boost = 25.0 
+        elif any(k in summary or k in industry for k in ['semiconductor', 'asic', 'design house']):
+            theme_label = "ASIC/設計"; theme_boost = 20.0     # 趨向穩健，略微調降
         elif any(k in summary or k in industry for k in ['ai server', 'high performance computing']):
-            theme_label = "AI伺服器"; theme_boost = 20.0
+            theme_label = "AI 伺服器"; theme_boost = 20.0
             
     except: pass
 
