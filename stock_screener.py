@@ -281,7 +281,8 @@ if results:
                 updated_df = df_new
             conn.update(data=updated_df)
             st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
-        except: pass
+        except Exception as e:
+            st.warning(f"⚠️ 雲端同步失敗: {e}")
 
     df_res = df_new.sort_values("波段評分", ascending=False)
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
