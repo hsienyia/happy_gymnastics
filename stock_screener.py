@@ -21,7 +21,6 @@ def get_reliable_name_map():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     for u in ["2", "4"]:
         try:
-            # 這裡的 requests 抓取公開資料表仍可用標準 requests
             res = requests.get(f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={u}", headers=headers, timeout=15)
             res.encoding = 'big5'
             soup = BeautifulSoup(res.text, 'html.parser')
@@ -37,7 +36,7 @@ def get_reliable_name_map():
 
 def get_supply_chain_db():
     base_chains = {
-        "💎 核心標的總匯 (ALL)": [], # 程式會自動彙整
+        "💎 核心標的總匯 (ALL)": [], 
         "🔥 CoWoS/先進封裝設備": ["6187", "3131", "3583", "3680", "1560", "2404", "6640", "6438", "3413"],
         "📡 CPO 矽光子/光通訊": ["3363", "4979", "3081", "3450", "3163", "6451", "4908", "6442", "2345"],
         "🤖 機器人/具身智能": ["2359", "2049", "4576", "2395", "6166", "1590", "8358", "8033", "2365"],
@@ -53,27 +52,34 @@ def get_supply_chain_db():
 
 # ====================== 2. 核心分析邏輯 ======================
 def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0, gsheets_data=None):
+    # 優化：處理盤中數據缺失
+    df = df.dropna(subset=['Close', 'High', 'Low', 'Open'])
+    
     if backtest_days > 0:
         df = df.iloc[:-backtest_days]
     elif mode == "盤後定型分析" and len(df) > 1: 
         df = df.iloc[:-1]
         
     if len(df) < 40: return None
-    c, l, h, o, v = df['Close'], df['Low'], df['High'], df['Open'], df['Volume']
+    
+    # 強制轉換數值，避免 yfinance 回傳物件型態導致計算錯誤
+    c = df['Close'].astype(float)
+    l = df['Low'].astype(float)
+    h = df['High'].astype(float)
+    o = df['Open'].astype(float)
+    v = df['Volume'].astype(float)
     
     theme_label, theme_boost = "", 0.0
     if is_manual: theme_label = "手動"; theme_boost = 10.0 
     
     info = {}
     try:
-        # yfinance 內部會處理連線，不再傳入 session
         info = ticker_obj.info
-    except:
-        pass
+    except: pass
 
     try:
-        industry = info.get('industry', '').lower()
-        summary = info.get('longBusinessSummary', '').lower()
+        industry = str(info.get('industry', '')).lower()
+        summary = str(info.get('longBusinessSummary', '')).lower()
         if any(k in summary or k in industry for k in ['cowos', 'advanced packaging']):
             theme_label = "CoWoS/先進封裝"; theme_boost = 35.0
         elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']):
@@ -84,7 +90,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
             theme_label = "GB200 水冷散熱"; theme_boost = 25.0
         elif any(k in summary or k in industry for k in ['semiconductor', 'asic', 'design house']):
             theme_label = "ASIC/設計"; theme_boost = 20.0
-        elif any(k in summary or k in industry for k in ['ai server', 'high performance HPC']):
+        elif any(k in summary or k in industry for k in ['ai server', 'high performance hpc']):
             theme_label = "AI 伺服器"; theme_boost = 20.0
     except: pass
 
@@ -112,18 +118,27 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
-    # 技術面判斷
-    has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
-    is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
-    ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
+    # --- 技術面判斷 (加入盤中容錯) ---
+    has_down_gap = any(h.iloc[i] < l.iloc[i-1] for i in range(-5, -1))
+    is_up_gap = float(l.iloc[-1]) > float(h.iloc[-2])
+    
+    # 移動平均線
+    ma5_series = c.rolling(5).mean()
+    ma10_series = c.rolling(10).mean()
+    ma20_series = c.rolling(20).mean()
+    ma5, ma10, ma20 = ma5_series.iloc[-1], ma10_series.iloc[-1], ma20_series.iloc[-1]
+    
+    # 形態判斷
     is_engulfing = (c.iloc[-1] > o.iloc[-1]) and (c.iloc[-1] > o.iloc[-2]) and (c.iloc[-1] > ma5)
-    high_20d = h.iloc[-20:-1].max()
-    is_pullback_stop = (high_20d > c.iloc[-1] * 1.05) and (c.iloc[-1] > ma5) and (c.iloc[-1] > high_20d * 0.90)
+    high_20d = h.iloc[-21:-1].max() # 排除當天價格
+    is_pullback_stop = (high_20d > c.iloc[-1] * 1.05) and (c.iloc[-1] > ma5) and (c.iloc[-1] > high_20d * 0.85)
+    
+    # 量能與突破
     v_avg5 = v.rolling(5).mean().iloc[-2]
-    is_vol_burst = v.iloc[-1] > (v_avg5 * (1.2 if mode == "盤中即時偵測" else 1.5))
+    is_vol_burst = v.iloc[-1] > (v_avg5 * (1.1 if mode == "盤中即時偵測" else 1.5))
     is_breakthrough = (c.iloc[-1] > ma20) and (c.iloc[-1] >= h.iloc[-20:].max())
-    is_volume_dry = v.iloc[-1] < (v.rolling(20).mean().iloc[-1] * 0.5) 
-    is_price_tight = (h.iloc[-5:].max() - l.iloc[-5:].min()) / c.iloc[-1] < 0.04 
+    is_volume_dry = v.iloc[-1] < (v.rolling(20).mean().iloc[-1] * 0.6) 
+    is_price_tight = (h.iloc[-5:].max() - l.iloc[-5:].min()) / c.iloc[-1] < 0.05 
 
     pattern, p_score = "趨勢追蹤", 0.0
     if has_down_gap and is_up_gap: pattern, p_score = "🏝️ 島狀反轉", 90.0
@@ -140,28 +155,32 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     w_raw = (v_ratio * 15.0) + ((float(c.iloc[-1])-float(l.iloc[-1]))/(float(h.iloc[-1])-float(l.iloc[-1]))*15.0 if (float(h.iloc[-1])-float(l.iloc[-1]))>0 else 7.0) + (10.0 if (ma5 > ma10 > ma20) else 0.0)
     w_score = round(w_raw * (1.2 if c.iloc[-1] > 2000 else 1.0), 1)
     
-    ret_5d, ret_15d = round(((c.iloc[-1]/c.iloc[-6])-1)*100, 2), round(((c.iloc[-1]/c.iloc[-16])-1)*100, 2)
+    # 漲幅計算 (防呆處理)
+    try:
+        ret_5d = round(((c.iloc[-1]/c.iloc[-6])-1)*100, 2)
+        ret_15d = round(((c.iloc[-1]/c.iloc[-16])-1)*100, 2)
+    except: ret_5d, ret_15d = 0.0, 0.0
+        
     total_score = round(float(p_score) + float(w_score) + (float(ret_5d) * 2.5) + float(extra_boost) + float(growth_boost) + float(theme_boost), 1)
     
     risk = "⚪ 一般波動"
     if is_volume_dry and is_price_tight and ret_5d < 3: risk = "🟣 潛力突襲"
-    elif ("島狀" in pattern or "突破" in pattern) and ret_15d < 12: risk = "🟢 優先關注"
+    elif ("島狀" in pattern or "突破" in pattern) and ret_15d < 15: risk = "🟢 優先關注"
     elif "續攻" in pattern and ret_5d < 5: risk = "🔵 準備續攻"
-    elif ret_15d > 35 or (ret_5d > 15 and ret_15d > 25): risk = "🔴 警戒避開"
-    elif ret_15d <= 2 and "吞噬" in pattern: risk = "🟡 築底觀察"
+    elif ret_15d > 35 or (ret_5d > 18 and ret_15d > 28): risk = "🔴 警戒避開"
+    elif ret_15d <= 3 and "吞噬" in pattern: risk = "🟡 築底觀察"
     
     ly_range = "N/A"
     try:
-        ly = datetime.now().year - 1
-        hly = ticker_obj.history(period="1y") # 優化：直接用簡化 period
+        hly = ticker_obj.history(period="1y")
         if not hly.empty: ly_range = f"{round(hly['Low'].min(), 1)} - {round(hly['High'].max(), 1)}"
     except: pass
 
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
 # ====================== 3. UI 介面 ======================
-st.set_page_config(page_title="戰情室 v9.1.2 Fixed", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.1.2 (TLS 反爬修正版)")
+st.set_page_config(page_title="戰情室 v9.1.2 Final", layout="wide")
+st.title("🏹 供應鏈戰情室 v9.1.2 (盤中數據修正版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -211,13 +230,13 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
             gsheets_data = conn.read(ttl="10m")
         except: pass
 
-    with st.spinner('新一代數據引擎掃描中...'):
+    with st.spinner('同步最新盤中數據...'):
         tickers_list = []
         for c in raw_codes:
             tickers_list.append(f"{c}.TW")
             tickers_list.append(f"{c}.TWO")
         
-        # 修正：不傳入 session 參數，yfinance 會自動使用內建的 curl_cffi 處理 TLS 指紋
+        # 下載 90 天數據確保指標計算完整
         all_data = yf.download(tickers_list, period="90d", group_by='ticker', threads=True, progress=False)
 
         for code in raw_codes:
@@ -228,8 +247,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                     df = all_data[f"{code}.TWO"]
                     full_code_used = f"{code}.TWO"
                 
-                if df.empty or df['Close'].isnull().all(): continue
-                df = df.dropna(subset=['Close'])
+                if df.empty: continue
                 
                 t_obj = yf.Ticker(full_code_used)
 
@@ -262,9 +280,8 @@ if results:
             else:
                 updated_df = df_new
             conn.update(data=updated_df)
-            st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
-        except Exception as e:
-            st.warning(f"⚠️ 雲端同步失敗: {e}")
+            st.success(f"☁️ 雲端同步完成！")
+        except: pass
 
     df_res = df_new.sort_values("波段評分", ascending=False)
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
