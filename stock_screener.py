@@ -211,7 +211,7 @@ def fetch_fugle_df(client, code):
 
 if st.button("🚀 啟動 V9.0 全面掃描"):
     if FUGLE_API_KEY == "NWJlNDQ4Y2QtZGZiMC00MmNkLTllNzgtZjIzZDMwNDc3OGMwIGZhZTI2MzYwLWZiZDEtNGRjYS05NGI2LWYyNThjNjFmYTE5Yw==":
-        st.error("❌ 請先填入 Fugle API Key")
+        st.error("NWJlNDQ4Y2QtZGZiMC00MmNkLTllNzgtZjIzZDMwNDc3OGMwIGZhZTI2MzYwLWZiZDEtNGRjYS05NGI2LWYyNThjNjFmYTE5Yw==")
         st.stop()
         
     client = RestClient(api_key=FUGLE_API_KEY)
