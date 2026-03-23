@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -7,6 +6,36 @@ import requests
 from datetime import datetime
 import pytz  # 用於修正時區
 from streamlit_gsheets import GSheetsConnection
+
+# ====================== 新增：鉅亨網備援引擎 ======================
+def get_anue_quote(code):
+    """
+    從鉅亨網 API 獲取即時行情 (Yahoo 限流時的救星)
+    """
+    # 嘗試上市代號，失敗則嘗試上櫃
+    prefixes = ["TWS", "TWO"]
+    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://invest.cnyes.com/'}
+    
+    for pref in prefixes:
+        try:
+            url = f"https://api.cnyes.com/media/api/v1/quote/stock/{pref}%3A{code}%3ASTOCK"
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                data = res.json().get('data', {}).get('quote', {})
+                if data:
+                    return {
+                        "price": data.get('lastPrice'),
+                        "change_pct": data.get('changePercent'),
+                        "vol": data.get('volume'),
+                        "high": data.get('high'),
+                        "low": data.get('low'),
+                        "open": data.get('open'),
+                        "prev_close": data.get('previousClose'),
+                        "source": "鉅亨網"
+                    }
+        except:
+            continue
+    return None
 
 # ====================== 1. 股票名稱與供應鏈資料 ======================
 @st.cache_data(ttl=86400)
@@ -52,7 +81,18 @@ def get_supply_chain_db():
     return base_chains
 
 # ====================== 2. 核心分析邏輯 ======================
-def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0, gsheets_data=None):
+def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0, gsheets_data=None, anue_data=None):
+    # --- 雙引擎整合：處理資料來源 ---
+    is_anue_mode = False
+    if (df is None or df.empty) and anue_data:
+        # 僅有鉅亨網資料，建立 Mock DataFrame 維持程式運作
+        is_anue_mode = True
+        price = anue_data['price']
+        df = pd.DataFrame({
+            'Close': [price]*40, 'High': [price]*40, 'Low': [price]*40, 
+            'Open': [price]*40, 'Volume': [anue_data['vol']]*40
+        })
+    
     if backtest_days > 0:
         df = df.iloc[:-backtest_days]
     elif mode == "盤後定型分析" and len(df) > 1: 
@@ -114,44 +154,55 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
-    # 技術面判斷
-    has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
-    is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
-    ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
-    is_engulfing = (c.iloc[-1] > o.iloc[-1]) and (c.iloc[-1] > o.iloc[-2]) and (c.iloc[-1] > ma5)
-    high_20d = h.iloc[-20:-1].max()
-    is_pullback_stop = (high_20d > c.iloc[-1] * 1.05) and (c.iloc[-1] > ma5) and (c.iloc[-1] > high_20d * 0.90)
-    v_avg5 = v.rolling(5).mean().iloc[-2]
-    is_vol_burst = v.iloc[-1] > (v_avg5 * (1.2 if mode == "盤中即時偵測" else 1.5))
-    is_breakthrough = (c.iloc[-1] > ma20) and (c.iloc[-1] >= h.iloc[-20:].max())
-    is_volume_dry = v.iloc[-1] < (v.rolling(20).mean().iloc[-1] * 0.5) 
-    is_price_tight = (h.iloc[-5:].max() - l.iloc[-5:].min()) / c.iloc[-1] < 0.04 
-
+    # 技術面判斷 (若為 Anue 模式則跳過形態)
     pattern, p_score = "趨勢追蹤", 0.0
-    if has_down_gap and is_up_gap: pattern, p_score = "🏝️ 島狀反轉", 90.0
-    elif is_pullback_stop: pattern, p_score = "🚀 準備續攻", 75.0 
-    elif is_engulfing: pattern, p_score = "🧱 底部吞噬", 45.0
+    ret_5d, ret_15d = 0.0, 0.0
+    w_score = 0.0
+
+    if not is_anue_mode:
+        has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
+        is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
+        ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
+        is_engulfing = (c.iloc[-1] > o.iloc[-1]) and (c.iloc[-1] > o.iloc[-2]) and (c.iloc[-1] > ma5)
+        high_20d = h.iloc[-20:-1].max()
+        is_pullback_stop = (high_20d > c.iloc[-1] * 1.05) and (c.iloc[-1] > ma5) and (c.iloc[-1] > high_20d * 0.90)
+        v_avg5 = v.rolling(5).mean().iloc[-2]
+        is_vol_burst = v.iloc[-1] > (v_avg5 * (1.2 if mode == "盤中即時偵測" else 1.5))
+        is_breakthrough = (c.iloc[-1] > ma20) and (c.iloc[-1] >= h.iloc[-20:].max())
+        is_volume_dry = v.iloc[-1] < (v.rolling(20).mean().iloc[-1] * 0.5) 
+        is_price_tight = (h.iloc[-5:].max() - l.iloc[-5:].min()) / c.iloc[-1] < 0.04 
+
+        if has_down_gap and is_up_gap: pattern, p_score = "🏝️ 島狀反轉", 90.0
+        elif is_pullback_stop: pattern, p_score = "🚀 準備續攻", 75.0 
+        elif is_engulfing: pattern, p_score = "🧱 底部吞噬", 45.0
+        
+        extra_boost = 25.0 if (is_vol_burst and is_breakthrough) else 0.0
+        if extra_boost: pattern = "🔥 動能突破" if pattern == "趨勢追蹤" else f"{pattern}+🔥"
+        if is_volume_dry and is_price_tight: pattern += " 💤"
+        if growth_boost > 10: pattern += "💰"
+        if value_status == "低估": pattern += "🎯"
+        
+        v_ratio = float(v.iloc[-1]) / ((v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2)
+        w_raw = (v_ratio * 15.0) + ((float(c.iloc[-1])-float(l.iloc[-1]))/(float(h.iloc[-1])-float(l.iloc[-1]))*15.0 if (float(h.iloc[-1])-float(l.iloc[-1]))>0 else 7.0) + (10.0 if (ma5 > ma10 > ma20) else 0.0)
+        w_score = round(w_raw * (1.2 if c.iloc[-1] > 2000 else 1.0), 1)
+        ret_5d, ret_15d = round(((c.iloc[-1]/c.iloc[-6])-1)*100, 2), round(((c.iloc[-1]/c.iloc[-16])-1)*100, 2)
+    else:
+        pattern = "形態需 Yahoo 數據"
+        ret_5d, ret_15d = anue_data['change_pct'], anue_data['change_pct'] # 僅能抓取今日漲跌
+
+    total_score = round(float(p_score) + float(w_score) + (float(ret_5d) * 2.5) + float(theme_boost) + float(growth_boost), 1)
     
-    extra_boost = 25.0 if (is_vol_burst and is_breakthrough) else 0.0
-    if extra_boost: pattern = "🔥 動能突破" if pattern == "趨勢追蹤" else f"{pattern}+🔥"
-    if is_volume_dry and is_price_tight: pattern += " 💤"
-    if growth_boost > 10: pattern += "💰"
-    if value_status == "低估": pattern += "🎯"
-    
-    v_ratio = float(v.iloc[-1]) / ((v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2)
-    w_raw = (v_ratio * 15.0) + ((float(c.iloc[-1])-float(l.iloc[-1]))/(float(h.iloc[-1])-float(l.iloc[-1]))*15.0 if (float(h.iloc[-1])-float(l.iloc[-1]))>0 else 7.0) + (10.0 if (ma5 > ma10 > ma20) else 0.0)
-    w_score = round(w_raw * (1.2 if c.iloc[-1] > 2000 else 1.0), 1)
-    
-    ret_5d, ret_15d = round(((c.iloc[-1]/c.iloc[-6])-1)*100, 2), round(((c.iloc[-1]/c.iloc[-16])-1)*100, 2)
-    total_score = round(float(p_score) + float(w_score) + (float(ret_5d) * 2.5) + float(extra_boost) + float(growth_boost) + float(theme_boost), 1)
-    
+    # 風險判斷
     risk = "⚪ 一般波動"
-    if is_volume_dry and is_price_tight and ret_5d < 3: risk = "🟣 潛力突襲"
-    elif ("島狀" in pattern or "突破" in pattern) and ret_15d < 12: risk = "🟢 優先關注"
-    elif "續攻" in pattern and ret_5d < 5: risk = "🔵 準備續攻"
-    elif ret_15d > 35 or (ret_5d > 15 and ret_15d > 25): risk = "🔴 警戒避開"
-    elif ret_15d <= 2 and "吞噬" in pattern: risk = "🟡 築底觀察"
-    
+    if not is_anue_mode:
+        if is_volume_dry and is_price_tight and ret_5d < 3: risk = "🟣 潛力突襲"
+        elif ("島狀" in pattern or "突破" in pattern) and ret_15d < 12: risk = "🟢 優先關注"
+        elif "續攻" in pattern and ret_5d < 5: risk = "🔵 準備續攻"
+        elif ret_15d > 35 or (ret_5d > 15 and ret_15d > 25): risk = "🔴 警戒避開"
+        elif ret_15d <= 2 and "吞噬" in pattern: risk = "🟡 築底觀察"
+    else:
+        if anue_data['change_pct'] > 5: risk = "⚪ 動能增強"
+
     ly_range = "N/A"
     try:
         ly = datetime.now().year - 1
@@ -162,8 +213,8 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
 # ====================== 3. UI 介面 ======================
-st.set_page_config(page_title="戰情室 v9.1.2", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.1.2 (EPS 備援版)")
+st.set_page_config(page_title="戰情室 v9.2.0", layout="wide")
+st.title("🏹 供應鏈戰情室 v9.2.0 (Yahoo+鉅亨雙引擎版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -199,7 +250,7 @@ with st.sidebar:
     bottom_only = st.checkbox("僅顯示形態確立股", value=True)
     eps_threshold = st.slider("📈 EPS 成長門檻", 1.0, 5.0, 1.7, 0.1)
 
-if st.button("🚀 啟動 V9.0 全面掃描"):
+if st.button("🚀 啟動 V9.2 全面掃描"):
     raw_codes = chains[selected_chain].copy()
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
@@ -220,23 +271,33 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
             tickers_list.append(f"{c}.TW")
             tickers_list.append(f"{c}.TWO")
         
-        all_data = yf.download(tickers_list, period="90d", group_by='ticker', threads=True, progress=False)
+        # Yahoo 下載
+        all_data = pd.DataFrame()
+        try:
+            all_data = yf.download(tickers_list, period="90d", group_by='ticker', threads=True, progress=False)
+        except:
+            st.warning("⚠️ Yahoo Finance 連線受限，正切換至鉅亨網 API...")
 
         for code in raw_codes:
             try:
-                df = all_data[f"{code}.TW"]
-                full_code_used = f"{code}.TW"
+                df = pd.DataFrame()
+                if not all_data.empty:
+                    try:
+                        df = all_data[f"{code}.TW"]
+                        if df.empty or df['Close'].isnull().all():
+                            df = all_data[f"{code}.TWO"]
+                    except: pass
+                
+                # 若 Yahoo 失敗，啟動鉅亨網互補
+                anue_info = None
                 if df.empty or df['Close'].isnull().all():
-                    df = all_data[f"{code}.TWO"]
-                    full_code_used = f"{code}.TWO"
-                
-                if df.empty or df['Close'].isnull().all(): continue
-                df = df.dropna(subset=['Close'])
-                
-                t_obj = yf.Ticker(full_code_used)
+                    anue_info = get_anue_quote(code)
 
-                # 傳入 gsheets_data 作為備援
-                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days, gsheets_data=gsheets_data)
+                df = df.dropna(subset=['Close']) if not df.empty else df
+                t_obj = yf.Ticker(f"{code}.TW")
+
+                # 傳入 gsheets_data 與 anue_info
+                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days, gsheets_data=gsheets_data, anue_data=anue_info)
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
@@ -253,6 +314,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                 })
             except: continue
 
+# ====================== (以下為 UI 渲染與 GSheets 同步邏輯，完全保留) ======================
 if results:
     df_new = pd.DataFrame(results)
     
@@ -260,7 +322,6 @@ if results:
         try:
             existing_df = conn.read(ttl=0) 
             if existing_df is not None and not existing_df.empty:
-                # 確保合併時不影響原有結構，僅更新最新紀錄
                 updated_df = pd.concat([existing_df, df_new], ignore_index=True)
                 updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
             else:
