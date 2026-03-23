@@ -4,7 +4,8 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 import requests
 from datetime import datetime
-import pytz  # 用於修正時區
+import pytz
+import time
 from streamlit_gsheets import GSheetsConnection
 
 # ====================== 1. 股票名稱與供應鏈資料 ======================
@@ -27,38 +28,36 @@ def get_reliable_name_map():
             for row in soup.find_all('tr'):
                 tds = row.find_all('td')
                 if tds and '　' in tds[0].get_text():
-                    code, name = tds[0].get_text().split('　', 1)
-                    if len(code) == 4: backup_names[code] = name.strip()
+                    parts = tds[0].get_text().split('　', 1)
+                    if len(parts) == 2:
+                        code, name = parts
+                        if len(code) == 4: backup_names[code] = name.strip()
         except: continue
     return backup_names
 
 def get_supply_chain_db():
     base_chains = {
-        "💎 核心標的總匯 (ALL)": [], # 程式會自動彙整
-        "🔥 CoWoS/先進封裝設備": ["6187", "3131", "3583", "3680", "1560", "2404", "6640", "6438", "3413"],
-        "📡 CPO 矽光子/光通訊": ["3363", "4979", "3081", "3450", "3163", "6451", "4908", "6442", "2345"],
-        "🤖 機器人/具身智能": ["2359", "2049", "4576", "2395", "6166", "1590", "8358", "8033", "2365"],
-        "❄️ GB200 散熱/水冷牆": ["3017", "3324", "3653", "2421", "3013", "3483", "6124"],
-        "⚙️ ASIC/高階伺服器": ["3661", "3443", "3035", "6643", "2382", "3231", "6669", "2317"],
-        "🔋 能源管理/強韌電網": ["1503", "1504", "1513", "1519", "1605", "1608", "1609"]
+        "ASIC 與 高速傳輸": ["3661", "3443", "3035", "6643", "6533", "6462", "4966", "5269", "6756"],
+        "AI 記憶體 (HBM/旺宏)": ["2337", "2344", "2408", "3260", "8299", "6239", "5289", "8271"],
+        "實體 AI (機器人/具身)": ["2317", "2049", "4576", "2395", "6166", "1590", "1536", "8033", "2356", "1504", "2308"],
+        "輝達 (NVIDIA) 供應鏈": ["2330", "2317", "2382", "3231", "6669", "3017", "3324", "3653", "2421", "2376", "2454", "3711", "3661", "3443"],
+        "台積電 (TSMC) 大聯盟": ["3131", "3583", "3680", "1560", "6187", "6438", "3413", "8027", "6515", "2404", "1717", "4755"],
+        "美股四大巨頭 (MAGMA)": ["2345", "6274", "2368", "2383", "3037", "8046", "3515", "4966", "2308", "6515"]
     }
-    # 自動合併所有代碼到 ALL
     all_codes = []
-    for k, v in base_chains.items():
-        if k != "💎 核心標的總匯 (ALL)": all_codes.extend(v)
-    base_chains["💎 核心標的總匯 (ALL)"] = list(set(all_codes))
-    return base_chains
+    for codes in base_chains.values(): all_codes.extend(codes)
+    return {"💎 核心標的總匯 (ALL)": list(set(all_codes)), **base_chains}
 
-# ====================== 2. 核心分析邏輯 ======================
-@st.cache_data(ttl=86400) # 快取 24 小時
-def get_stock_info(full_code):
+# 新增快取函數，專門抓取 Info (EPS等數據)，避免被 Yahoo 頻繁阻擋導致 N/A
+@st.cache_data(ttl=86400)
+def get_cached_info(full_code):
     try:
-        t = yf.Ticker(full_code)
-        return t.info
+        return yf.Ticker(full_code).info
     except:
         return {}
-    analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0):
-    # 處理手動回測天數與模式邏輯
+
+# ====================== 2. 核心分析邏輯 ======================
+def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0):
     if backtest_days > 0:
         df = df.iloc[:-backtest_days]
     elif mode == "盤後定型分析" and len(df) > 1: 
@@ -70,25 +69,27 @@ def get_stock_info(full_code):
     theme_label, theme_boost = "", 0.0
     if is_manual: theme_label = "手動"; theme_boost = 10.0 
     
+    # 使用快取後的 Info 資料
+    info = get_cached_info(ticker_obj.ticker)
+    
     try:
-        info = ticker_obj.info
         industry = info.get('industry', '').lower()
         summary = info.get('longBusinessSummary', '').lower()
         
-        # 根據 2026/03 最新盤勢調整題材加分
-        if any(k in summary or k in industry for k in ['cowos', 'advanced packaging']):
-            theme_label = "CoWoS/先進封裝"; theme_boost = 35.0  # 最高加分，反映目前萬潤熱度
+        if any(k in industry or k in summary for k in ['semiconductor', 'asic', 'design house']):
+            theme_label = "ASIC"; theme_boost = 30.0
+        elif any(k in industry or k in summary for k in ['robot', 'automation', 'machinery']):
+            theme_label = "Robot"; theme_boost = 25.0
+        elif any(k in industry or k in summary for k in ['power', 'liquid cooling', 'thermal']):
+            theme_label = "Cooling"; theme_boost = 20.0
         elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']):
-            theme_label = "CPO 矽光子"; theme_boost = 30.0    # 資金新寵兒
-        elif any(k in summary or k in industry for k in ['robot', 'automation', 'machinery']):
-            theme_label = "機器人系統"; theme_boost = 25.0    # 具身智能熱點
-        elif any(k in summary or k in industry for k in ['liquid cooling', 'thermal', 'power']):
-            theme_label = "GB200 水冷散熱"; theme_boost = 25.0 
-        elif any(k in summary or k in industry for k in ['semiconductor', 'asic', 'design house']):
-            theme_label = "ASIC/設計"; theme_boost = 20.0     # 趨向穩健，略微調降
+            theme_label = "CPO光通訊"; theme_boost = 25.0
+        elif any(k in summary or k in industry for k in ['wafer fabrication equipment', 'semiconductor equipment']):
+            theme_label = "半導體設備"; theme_boost = 20.0
+        elif any(k in summary for k in ['cowos', 'advanced packaging']):
+            theme_label = "CoWoS"; theme_boost = 25.0
         elif any(k in summary or k in industry for k in ['ai server', 'high performance computing']):
-            theme_label = "AI 伺服器"; theme_boost = 20.0
-            
+            theme_label = "AI伺服器"; theme_boost = 20.0
     except: pass
 
     fwd_eps, trail_eps, growth_boost = 0.0, 0.0, 0.0
@@ -109,6 +110,7 @@ def get_stock_info(full_code):
     except: 
         if not is_manual: return None
 
+    # 技術面判斷
     has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
     ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
@@ -156,8 +158,8 @@ def get_stock_info(full_code):
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
 # ====================== 3. UI 介面 ======================
-st.set_page_config(page_title="戰情室 v9.1.2", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.1.2 (前後分析版)")
+st.set_page_config(page_title="戰情室 v9.0", layout="wide")
+st.title("🏹 供應鏈戰情室 v9.0 (不覆寫修正版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -171,9 +173,7 @@ except:
 with st.sidebar:
     st.header("⚙️ 掃描設定")
     mode = st.radio("📊 數據模式", ["盤中即時偵測", "盤後定型分析"])
-    # 新增手動回測天數選項
     backtest_days = st.number_input("🔢 手動回溯交易日 (0為最新)", min_value=0, max_value=30, value=0, step=1)
-    
     selected_chain = st.selectbox("選擇預設供應鏈", list(chains.keys()))
     custom_input = st.text_input("➕ 手動新增標的", placeholder="例如: 3661, 2308")
     st.divider()
@@ -200,12 +200,10 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
     
-    # 修正時區為台北時間
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-    with st.spinner('掃描中...'):
-        # 效能優化：批次下載
+    with st.spinner('連線數據中心...'):
         tickers_list = []
         for c in raw_codes:
             tickers_list.append(f"{c}.TW")
@@ -215,19 +213,18 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
 
         for code in raw_codes:
             try:
-                df = all_data[f"{code}.TW"]
+                df = all_data.get(f"{code}.TW", pd.DataFrame())
                 full_code_used = f"{code}.TW"
                 if df.empty or df['Close'].isnull().all():
-                    df = all_data[f"{code}.TWO"]
+                    df = all_data.get(f"{code}.TWO", pd.DataFrame())
                     full_code_used = f"{code}.TWO"
                 
                 if df.empty or df['Close'].isnull().all(): continue
                 df = df.dropna(subset=['Close'])
                 
                 t_obj = yf.Ticker(full_code_used)
-
-                # 傳入手動回溯天數參數
                 res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days)
+                
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
@@ -242,21 +239,20 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                     "連結": f"https://tw.stock.yahoo.com/quote/{code}", "評價": status, "預估 EPS": f_eps,
                     "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
                 })
+                if len(results) % 8 == 0: time.sleep(0.3)
             except: continue
 
 if results:
     df_new = pd.DataFrame(results)
-    
     if conn:
         try:
             existing_df = conn.read(ttl=0) 
             if existing_df is not None and not existing_df.empty:
-                updated_df = pd.concat([existing_df, df_new], ignore_index=True)
-                updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
+                updated_df = pd.concat([existing_df, df_new], ignore_index=True).drop_duplicates(subset=['時間', '代號'], keep='last')
             else:
                 updated_df = df_new
             conn.update(data=updated_df)
-            st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
+            st.success(f"☁️ 雲端同步完成！筆數：{len(updated_df)}")
         except Exception as e:
             st.warning(f"⚠️ 雲端同步失敗: {e}")
 
@@ -297,27 +293,15 @@ if results:
                         st.progress(min(max(int(row['波段評分']), 0)/400, 1.0), text=f"{row['波段評分']}")
                         
                         with st.expander("🔍 財報與價值評估詳情"):
-                            st.write(f"**合理區間:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
-                            st.write(f"**前一年 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
-                            
+                            st.write(f"**合理價:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
+                            st.write(f"**前一 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
                             st.divider()
                             st.markdown("### 🏹 實戰操作建議")
                             r_type = row['風險']
-                            if "🟢" in r_type:
-                                st.success("**進場：** 🏆 核心買點。建議佈局 **40-50%** 資金。")
-                                st.info("**防守點：** 跳空缺口下緣 或 5日均線 (MA5)。")
-                            elif "🟣" in r_type:
-                                st.write("🔮 **進場：** 底部潛伏。建議小量試單 **10-15%** 資金。")
-                                st.info("**防守點：** 近 5 日盤整區最低點。")
-                            elif "🔵" in r_type:
-                                st.info("**進場：** 回檔二抽。建議加碼或補票 **20-30%** 資金。")
-                                st.info("**防守點：** 10日均線 (MA10) 支撐位。")
-                            elif "🟡" in r_type:
-                                st.warning("**進場：** 築底期。建議分批建立基本持股 **15-20%**。")
-                                st.info("**防守點：** 底部吞噬紅棒的開盤價位置。")
-                            elif "🔴" in r_type:
-                                st.error("🛑 **注意：** 漲幅已過大，建議獲利了結，**不宜開新倉**。")
-                            else:
-                                st.write("⚪ **建議：** 趨勢不明，觀望為主。若有 🔥 標籤可考慮極短線小量參與。")
-
+                            if "🟢" in r_type: st.success("**進場：** 🏆 核心買點。建議佈局 **40-50%** 資金。")
+                            elif "🟣" in r_type: st.write("🔮 **進場：** 底部潛伏。建議小量試單 **10-15%** 資金。")
+                            elif "🔵" in r_type: st.info("**進場：** 回檔二抽。建議加碼或補票 **20-30%** 資金。")
+                            elif "🟡" in r_type: st.warning("**進場：** 築底期。建議分批建立基本持股 **15-20%**。")
+                            elif "🔴" in r_type: st.error("🛑 **注意：** 漲幅已過大，建議獲利了結。")
+                            else: st.write("⚪ **建議：** 趨勢不明，觀望為主。")
 else: st.write("請啟動掃描。")
