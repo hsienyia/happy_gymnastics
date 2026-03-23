@@ -1,11 +1,17 @@
 import streamlit as st
 import pandas as pd
+from fugle_marketdata import RestClient  # 需安裝: pip install fugle-marketdata
 import yfinance as yf
 from bs4 import BeautifulSoup
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz  # 用於修正時區
+import time
 from streamlit_gsheets import GSheetsConnection
+
+# ====================== 0. 富果 API 設定 ======================
+# 請在此填入你的富果 API 金鑰
+FUGLE_API_KEY = "NWJlNDQ4Y2QtZGZiMC00MmNkLTllNzgtZjIzZDMwNDc3OGMwIGZhZTI2MzYwLWZiZDEtNGRjYS05NGI2LWYyNThjNjFmYTE5Yw=="
 
 # ====================== 1. 股票名稱與供應鏈資料 ======================
 @st.cache_data(ttl=86400)
@@ -153,7 +159,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v9.1.2", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.1.2 (相容版)")
+st.title("🏹 供應鏈戰情室 v9.1.2 (Fugle API 相容版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -190,7 +196,25 @@ with st.sidebar:
     bottom_only = st.checkbox("僅顯示形態確立股", value=True)
     eps_threshold = st.slider("📈 EPS 成長門檻", 1.0, 5.0, 1.7, 0.1)
 
+# 富果資料抓取工具
+def fetch_fugle_df(client, code):
+    try:
+        start_date = (datetime.now() - timedelta(days=150)).strftime('%Y-%m-%d')
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        kline = client.stock.historical.candles(symbol=code, timeframe='D', fields=['open', 'high', 'low', 'close', 'volume'], start=start_date, end=end_date)
+        if not kline or 'data' not in kline: return pd.DataFrame()
+        df = pd.DataFrame(kline['data'])
+        df = df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
+        df.index = pd.to_datetime(df['date'])
+        return df
+    except: return pd.DataFrame()
+
 if st.button("🚀 啟動 V9.0 全面掃描"):
+    if FUGLE_API_KEY == "NWJlNDQ4Y2QtZGZiMC00MmNkLTllNzgtZjIzZDMwNDc3OGMwIGZhZTI2MzYwLWZiZDEtNGRjYS05NGI2LWYyNThjNjFmYTE5Yw==":
+        st.error("❌ 請先填入 Fugle API Key")
+        st.stop()
+        
+    client = RestClient(api_key=FUGLE_API_KEY)
     raw_codes = chains[selected_chain].copy()
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
@@ -198,19 +222,16 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-    with st.spinner('掃描中...'):
+    with st.spinner('使用富果 API 掃描中...'):
         for code in raw_codes:
             try:
-                # 策略：優先試 TW，不行再試 TWO
-                df = yf.download(f"{code}.TW", period="90d", progress=False)
-                full_code_used = f"{code}.TW"
-                if df.empty or len(df) < 10:
-                    df = yf.download(f"{code}.TWO", period="90d", progress=False)
-                    full_code_used = f"{code}.TWO"
-                
+                # 使用富果抓 K 線
+                df = fetch_fugle_df(client, code)
                 if df.empty or len(df) < 10: continue
                 
-                t_obj = yf.Ticker(full_code_used)
+                # 使用 yfinance 抓 Ticker Info (這部分不易限流)
+                t_obj = yf.Ticker(f"{code}.TW")
+                
                 res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days)
                 if not res: continue
                 
@@ -227,6 +248,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                     "連結": f"https://tw.stock.yahoo.com/quote/{code}", "評價": status, "預估 EPS": f_eps,
                     "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
                 })
+                time.sleep(0.1) # 避開富果頻率限制
             except: continue
 
 if results:
@@ -258,6 +280,7 @@ if results:
             if view_mode == "傳統表格 (橫式)":
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
             else:
+                # 這裡 100% 復原為你提供的卡片 UI 格式
                 for idx, row in display_df.reset_index(drop=True).iterrows():
                     medal = top_medals.get(idx, "") if cat == "全部" else ""
                     theme_tag = f"【{row['題材']}】" if row['題材'] else ""
