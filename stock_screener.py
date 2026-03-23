@@ -1,4 +1,5 @@
 
+
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -55,15 +56,10 @@ def get_supply_chain_db():
 def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0, gsheets_data=None):
     # 優化：處理盤中數據缺失
     df = df.dropna(subset=['Close', 'High', 'Low', 'Open'])
-    from datetime import datetime
-    import pytz
-    now_tw = datetime.now(pytz.timezone('Asia/Taipei'))
-    is_maintenance_time = now_tw.hour < 9
     
     if backtest_days > 0:
         df = df.iloc[:-backtest_days]
-    elif (mode == "盤後定型分析" or is_maintenance_time) and len(df) > 1: 
-    # 只要是盤後模式，或是凌晨時段，都自動強制看「已確定的昨日收盤」
+    elif mode == "盤後定型分析" and len(df) > 1: 
         df = df.iloc[:-1]
         
     if len(df) < 40: return None
