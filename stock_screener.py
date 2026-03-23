@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -8,6 +6,29 @@ import requests
 from datetime import datetime
 import pytz  # 用於修正時區
 from streamlit_gsheets import GSheetsConnection
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+
+# ====================== 0. 限流優化：建立 Session ======================
+def get_retrying_session():
+    session = requests.Session()
+    # 模擬真實瀏覽器，降低被限流機率
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    })
+    retry = Retry(
+        total=3, # 最多重試3次
+        backoff_factor=1, # 重試間隔延遲
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET"]
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+session = get_retrying_session()
 
 # ====================== 1. 股票名稱與供應鏈資料 ======================
 @st.cache_data(ttl=86400)
@@ -20,10 +41,10 @@ def get_reliable_name_map():
         "3035": "智原", "6643": "M31", "6462": "神盾", "6533": "晶心科",
         "2049": "上銀", "1590": "亞德客-KY", "2395": "研華", "6166": "橫河/凌華", "4576": "大銀微"
     }
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # 使用帶有重試機率的 session
     for u in ["2", "4"]:
         try:
-            res = requests.get(f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={u}", headers=headers, timeout=15)
+            res = session.get(f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={u}", timeout=15)
             res.encoding = 'big5'
             soup = BeautifulSoup(res.text, 'html.parser')
             for row in soup.find_all('tr'):
@@ -65,7 +86,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     theme_label, theme_boost = "", 0.0
     if is_manual: theme_label = "手動"; theme_boost = 10.0 
     
-    # 嘗試從 Yahoo 抓取 Info，若失敗則使用備援
+    # 優化：ticker_obj 使用 session 抓取 info
     info = {}
     try:
         info = ticker_obj.info
@@ -92,10 +113,8 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     fwd_eps, trail_eps, growth_boost = 0.0, 0.0, 0.0
     fair_low, fair_high, value_status = 0.0, 0.0, "N/A"
     
-    # --- EPS 備援邏輯啟動 ---
     try:
         fwd_eps = float(info.get('forwardEps', 0) or 0)
-        # 如果 Yahoo 回傳 0 且 GSheets 有資料，則使用備援
         if fwd_eps == 0 and gsheets_data is not None and not gsheets_data.empty:
             match = gsheets_data[gsheets_data['代號'].astype(str) == str(code)]
             if not match.empty:
@@ -163,8 +182,8 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
 # ====================== 3. UI 介面 ======================
-st.set_page_config(page_title="戰情室 v9.1.2", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.1.2 (EPS 備援版)")
+st.set_page_config(page_title="戰情室 v9.1.2 Optimized", layout="wide")
+st.title("🏹 供應鏈戰情室 v9.1.2 (限流優化版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -208,20 +227,20 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-    # 預先讀取 GSheets 資料作為備援
     gsheets_data = None
     if conn:
         try:
             gsheets_data = conn.read(ttl="10m")
         except: pass
 
-    with st.spinner('掃描中...'):
+    with st.spinner('優化模式掃描中...'):
         tickers_list = []
         for c in raw_codes:
             tickers_list.append(f"{c}.TW")
             tickers_list.append(f"{c}.TWO")
         
-        all_data = yf.download(tickers_list, period="90d", group_by='ticker', threads=True, progress=False)
+        # 使用 Session 優化 yf.download
+        all_data = yf.download(tickers_list, period="90d", group_by='ticker', threads=True, progress=False, session=session)
 
         for code in raw_codes:
             try:
@@ -234,9 +253,9 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                 if df.empty or df['Close'].isnull().all(): continue
                 df = df.dropna(subset=['Close'])
                 
-                t_obj = yf.Ticker(full_code_used)
+                # 同樣注入 session 到 Ticker 物件
+                t_obj = yf.Ticker(full_code_used, session=session)
 
-                # 傳入 gsheets_data 作為備援
                 res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days, gsheets_data=gsheets_data)
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
@@ -261,7 +280,6 @@ if results:
         try:
             existing_df = conn.read(ttl=0) 
             if existing_df is not None and not existing_df.empty:
-                # 確保合併時不影響原有結構，僅更新最新紀錄
                 updated_df = pd.concat([existing_df, df_new], ignore_index=True)
                 updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
             else:
