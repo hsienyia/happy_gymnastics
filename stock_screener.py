@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -57,20 +58,8 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     
     if backtest_days > 0:
         df = df.iloc[:-backtest_days]
-    elif mode == "盤後定型分析" and len(df) > 1:
-    # 取得現在的台灣時間
-        tw_tz = pytz.timezone('Asia/Taipei')
-        now_tw = datetime.now(tw_tz)
-    
-    # 判定：如果是週一到週五，且在 14:30 之前 (尚未完全收盤定盤)
-    # 就丟棄最後一根 (避免分析到不完整的盤中資料)；否則就保留。
-        is_trading_hours = (now_tw.weekday() < 5) and (now_tw.hour < 14 or (now_tw.hour == 14 and now_tw.minute < 30))
-    
-    if is_trading_hours:
+    elif mode == "盤後定型分析" and len(df) > 1: 
         df = df.iloc[:-1]
-    else:
-        # 晚上或週末執行，最後一根通常已經是完整收盤價，不需剔除
-        df = df
         
     if len(df) < 40: return None
     
