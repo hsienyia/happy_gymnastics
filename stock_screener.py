@@ -210,7 +210,7 @@ def fetch_fugle_df(client, code):
     except: return pd.DataFrame()
 
 if st.button("🚀 啟動 V9.0 全面掃描"):
-    if FUGLE_API_KEY == "NWJlNDQ4Y2QtZGZiMC00MmNkLTllNzgtZjIzZDMwNDc3OGMwIGZhZTI2MzYwLWZiZDEtNGRjYS05NGI2LWYyNThjNjFmYTE5Yw==":
+    if FUGLE_API_KEY == "在此填入你的富果API金鑰":
         st.error("❌ 請先填入 Fugle API Key")
         st.stop()
         
