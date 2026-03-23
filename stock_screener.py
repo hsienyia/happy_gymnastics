@@ -50,7 +50,14 @@ def get_supply_chain_db():
     return base_chains
 
 # ====================== 2. 核心分析邏輯 ======================
-def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0):
+@st.cache_data(ttl=86400) # 快取 24 小時
+def get_stock_info(full_code):
+    try:
+        t = yf.Ticker(full_code)
+        return t.info
+    except:
+        return {}
+    analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0):
     # 處理手動回測天數與模式邏輯
     if backtest_days > 0:
         df = df.iloc[:-backtest_days]
