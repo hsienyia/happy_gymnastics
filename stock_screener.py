@@ -280,7 +280,7 @@ if results:
             else:
                 updated_df = df_new
             conn.update(data=updated_df)
-            st.success(f"☁️ 雲端同步完成！")
+            st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
         except: pass
 
     df_res = df_new.sort_values("波段評分", ascending=False)
