@@ -27,8 +27,10 @@ def get_reliable_name_map():
             for row in soup.find_all('tr'):
                 tds = row.find_all('td')
                 if tds and '　' in tds[0].get_text():
-                    code, name = tds[0].get_text().split('　', 1)
-                    if len(code) == 4: backup_names[code] = name.strip()
+                    parts = tds[0].get_text().split('　', 1)
+                    if len(parts) == 2:
+                        code, name = parts
+                        if len(code) == 4: backup_names[code] = name.strip()
         except: continue
     return backup_names
 
@@ -42,7 +44,6 @@ def get_supply_chain_db():
         "⚙️ ASIC/高階伺服器": ["3661", "3443", "3035", "6643", "2382", "3231", "6669", "2317"],
         "🔋 能源管理/強韌電網": ["1503", "1504", "1513", "1519", "1605", "1608", "1609"]
     }
-    # 自動合併所有代碼到 ALL
     all_codes = []
     for k, v in base_chains.items():
         if k != "💎 核心標的總匯 (ALL)": all_codes.extend(v)
@@ -50,8 +51,7 @@ def get_supply_chain_db():
     return base_chains
 
 # ====================== 2. 核心分析邏輯 ======================
-def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0):
-    # 處理手動回測天數與模式邏輯
+def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0, gsheets_data=None):
     if backtest_days > 0:
         df = df.iloc[:-backtest_days]
     elif mode == "盤後定型分析" and len(df) > 1: 
@@ -63,31 +63,42 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     theme_label, theme_boost = "", 0.0
     if is_manual: theme_label = "手動"; theme_boost = 10.0 
     
+    # 嘗試從 Yahoo 抓取 Info，若失敗則使用備援
+    info = {}
     try:
         info = ticker_obj.info
+    except:
+        pass
+
+    try:
         industry = info.get('industry', '').lower()
         summary = info.get('longBusinessSummary', '').lower()
-        
-        # 根據 2026/03 最新盤勢調整題材加分
         if any(k in summary or k in industry for k in ['cowos', 'advanced packaging']):
-            theme_label = "CoWoS/先進封裝"; theme_boost = 35.0  # 最高加分，反映目前萬潤熱度
+            theme_label = "CoWoS/先進封裝"; theme_boost = 35.0
         elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']):
-            theme_label = "CPO 矽光子"; theme_boost = 30.0    # 資金新寵兒
+            theme_label = "CPO 矽光子"; theme_boost = 30.0
         elif any(k in summary or k in industry for k in ['robot', 'automation', 'machinery']):
-            theme_label = "機器人系統"; theme_boost = 25.0    # 具身智能熱點
+            theme_label = "機器人系統"; theme_boost = 25.0
         elif any(k in summary or k in industry for k in ['liquid cooling', 'thermal', 'power']):
-            theme_label = "GB200 水冷散熱"; theme_boost = 25.0 
+            theme_label = "GB200 水冷散熱"; theme_boost = 25.0
         elif any(k in summary or k in industry for k in ['semiconductor', 'asic', 'design house']):
-            theme_label = "ASIC/設計"; theme_boost = 20.0     # 趨向穩健，略微調降
-        elif any(k in summary or k in industry for k in ['ai server', 'high performance computing']):
+            theme_label = "ASIC/設計"; theme_boost = 20.0
+        elif any(k in summary or k in industry for k in ['ai server', 'high performance HPC']):
             theme_label = "AI 伺服器"; theme_boost = 20.0
-            
     except: pass
 
     fwd_eps, trail_eps, growth_boost = 0.0, 0.0, 0.0
     fair_low, fair_high, value_status = 0.0, 0.0, "N/A"
+    
+    # --- EPS 備援邏輯啟動 ---
     try:
         fwd_eps = float(info.get('forwardEps', 0) or 0)
+        # 如果 Yahoo 回傳 0 且 GSheets 有資料，則使用備援
+        if fwd_eps == 0 and gsheets_data is not None and not gsheets_data.empty:
+            match = gsheets_data[gsheets_data['代號'].astype(str) == str(code)]
+            if not match.empty:
+                fwd_eps = float(match.iloc[0].get('預估 EPS', 0))
+        
         trail_eps = float(info.get('trailingEps', 0) or 0)
         growth_ratio = (fwd_eps / trail_eps) if (trail_eps > 0 and fwd_eps > 0) else 0.0
         
@@ -102,6 +113,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     except: 
         if not is_manual: return None
 
+    # 技術面判斷
     has_down_gap = any(df['High'].iloc[i] < df['Low'].iloc[i-1] for i in range(-5, -1))
     is_up_gap = float(df['Low'].iloc[-1]) > float(df['High'].iloc[-2])
     ma5, ma10, ma20 = c.rolling(5).mean().iloc[-1], c.rolling(10).mean().iloc[-1], c.rolling(20).mean().iloc[-1]
@@ -150,7 +162,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v9.1.2", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.1.2 (前後分析版)")
+st.title("🏹 供應鏈戰情室 v9.1.2 (EPS 備援版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -164,9 +176,7 @@ except:
 with st.sidebar:
     st.header("⚙️ 掃描設定")
     mode = st.radio("📊 數據模式", ["盤中即時偵測", "盤後定型分析"])
-    # 新增手動回測天數選項
     backtest_days = st.number_input("🔢 手動回溯交易日 (0為最新)", min_value=0, max_value=30, value=0, step=1)
-    
     selected_chain = st.selectbox("選擇預設供應鏈", list(chains.keys()))
     custom_input = st.text_input("➕ 手動新增標的", placeholder="例如: 3661, 2308")
     st.divider()
@@ -193,12 +203,17 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
     
-    # 修正時區為台北時間
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
+    # 預先讀取 GSheets 資料作為備援
+    gsheets_data = None
+    if conn:
+        try:
+            gsheets_data = conn.read(ttl="10m")
+        except: pass
+
     with st.spinner('掃描中...'):
-        # 效能優化：批次下載
         tickers_list = []
         for c in raw_codes:
             tickers_list.append(f"{c}.TW")
@@ -219,8 +234,8 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                 
                 t_obj = yf.Ticker(full_code_used)
 
-                # 傳入手動回溯天數參數
-                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days)
+                # 傳入 gsheets_data 作為備援
+                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days, gsheets_data=gsheets_data)
                 if not res: continue
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
@@ -244,6 +259,7 @@ if results:
         try:
             existing_df = conn.read(ttl=0) 
             if existing_df is not None and not existing_df.empty:
+                # 確保合併時不影響原有結構，僅更新最新紀錄
                 updated_df = pd.concat([existing_df, df_new], ignore_index=True)
                 updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
             else:
