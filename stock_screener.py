@@ -1,31 +1,15 @@
+
+
 import streamlit as st
 import pandas as pd
 import yfinance as yf
 from bs4 import BeautifulSoup
 import requests
 from datetime import datetime
-import pytz  
+import pytz  # 用於修正時區
 from streamlit_gsheets import GSheetsConnection
-import time
 
-# ====================== 新增：數據救援引擎 (僅用於 Yahoo 失敗時) ======================
-def get_rescue_data(code):
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    for pref in ["TWS", "TWO"]:
-        try:
-            url = f"https://api.cnyes.com/media/api/v1/quote/stock/{pref}%3A{code}%3ASTOCK"
-            res = requests.get(url, headers=headers, timeout=3).json()
-            d = res.get('data', {}).get('quote', {})
-            if d and d.get('lastPrice'):
-                p = d['lastPrice']
-                # 建立 40 天的虛擬 K 線，讓原始 analyze 邏輯能跑出卡片
-                return pd.DataFrame({
-                    'Close': [p]*40, 'Open': [p]*40, 'High': [p]*40, 'Low': [p]*40, 'Volume': [d.get('volume', 0)]*40
-                }, index=pd.date_range(end=pd.Timestamp.now(), periods=40))
-        except: continue
-    return pd.DataFrame()
-
-# ====================== 1. 股票名稱與供應鏈資料 (100% 原始) ======================
+# ====================== 1. 股票名稱與供應鏈資料 ======================
 @st.cache_data(ttl=86400)
 def get_reliable_name_map():
     backup_names = {
@@ -54,7 +38,7 @@ def get_reliable_name_map():
 
 def get_supply_chain_db():
     base_chains = {
-        "💎 核心標的總匯 (ALL)": [], 
+        "💎 核心標的總匯 (ALL)": [], # 程式會自動彙整
         "🔥 CoWoS/先進封裝設備": ["6187", "3131", "3583", "3680", "1560", "2404", "6640", "6438", "3413"],
         "📡 CPO 矽光子/光通訊": ["3363", "4979", "3081", "3450", "3163", "6451", "4908", "6442", "2345"],
         "🤖 機器人/具身智能": ["2359", "2049", "4576", "2395", "6166", "1590", "8358", "8033", "2365"],
@@ -68,49 +52,61 @@ def get_supply_chain_db():
     base_chains["💎 核心標的總匯 (ALL)"] = list(set(all_codes))
     return base_chains
 
-# ====================== 2. 核心分析邏輯 (100% 原始) ======================
+# ====================== 2. 核心分析邏輯 ======================
 def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=False, backtest_days=0, gsheets_data=None):
-    if df is None or len(df) < 40: return None
-    
     if backtest_days > 0:
         df = df.iloc[:-backtest_days]
     elif mode == "盤後定型分析" and len(df) > 1: 
         df = df.iloc[:-1]
         
+    if len(df) < 40: return None
     c, l, h, o, v = df['Close'], df['Low'], df['High'], df['Open'], df['Volume']
     
     theme_label, theme_boost = "", 0.0
     if is_manual: theme_label = "手動"; theme_boost = 10.0 
     
+    # 嘗試從 Yahoo 抓取 Info，若失敗則使用備援
     info = {}
-    try: info = ticker_obj.info
-    except: pass
+    try:
+        info = ticker_obj.info
+    except:
+        pass
 
     try:
         industry = info.get('industry', '').lower()
         summary = info.get('longBusinessSummary', '').lower()
-        if any(k in summary or k in industry for k in ['cowos', 'advanced packaging']): theme_label = "CoWoS/先進封裝"; theme_boost = 35.0
-        elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']): theme_label = "CPO 矽光子"; theme_boost = 30.0
-        elif any(k in summary or k in industry for k in ['robot', 'automation', 'machinery']): theme_label = "機器人系統"; theme_boost = 25.0
-        elif any(k in summary or k in industry for k in ['liquid cooling', 'thermal', 'power']): theme_label = "GB200 水冷散熱"; theme_boost = 25.0
-        elif any(k in summary or k in industry for k in ['semiconductor', 'asic', 'design house']): theme_label = "ASIC/設計"; theme_boost = 20.0
-        elif any(k in summary or k in industry for k in ['ai server', 'high performance HPC']): theme_label = "AI 伺服器"; theme_boost = 20.0
+        if any(k in summary or k in industry for k in ['cowos', 'advanced packaging']):
+            theme_label = "CoWoS/先進封裝"; theme_boost = 35.0
+        elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']):
+            theme_label = "CPO 矽光子"; theme_boost = 30.0
+        elif any(k in summary or k in industry for k in ['robot', 'automation', 'machinery']):
+            theme_label = "機器人系統"; theme_boost = 25.0
+        elif any(k in summary or k in industry for k in ['liquid cooling', 'thermal', 'power']):
+            theme_label = "GB200 水冷散熱"; theme_boost = 25.0
+        elif any(k in summary or k in industry for k in ['semiconductor', 'asic', 'design house']):
+            theme_label = "ASIC/設計"; theme_boost = 20.0
+        elif any(k in summary or k in industry for k in ['ai server', 'high performance HPC']):
+            theme_label = "AI 伺服器"; theme_boost = 20.0
     except: pass
 
     fwd_eps, trail_eps, growth_boost = 0.0, 0.0, 0.0
     fair_low, fair_high, value_status = 0.0, 0.0, "N/A"
     
+    # --- EPS 備援邏輯啟動 ---
     try:
         fwd_eps = float(info.get('forwardEps', 0) or 0)
+        # 如果 Yahoo 回傳 0 且 GSheets 有資料，則使用備援
         if fwd_eps == 0 and gsheets_data is not None and not gsheets_data.empty:
             match = gsheets_data[gsheets_data['代號'].astype(str) == str(code)]
-            if not match.empty: fwd_eps = float(match.iloc[0].get('預估 EPS', 0))
+            if not match.empty:
+                fwd_eps = float(match.iloc[0].get('預估 EPS', 0))
         
         trail_eps = float(info.get('trailingEps', 0) or 0)
         growth_ratio = (fwd_eps / trail_eps) if (trail_eps > 0 and fwd_eps > 0) else 0.0
         
         if not is_manual and theme_boost == 0:
-            if not ((trail_eps <= 0 and fwd_eps > 0) or growth_ratio >= float(eps_threshold)): return None
+            if not ((trail_eps <= 0 and fwd_eps > 0) or growth_ratio >= float(eps_threshold)):
+                return None
             
         if fwd_eps > 0:
             fair_low, fair_high = fwd_eps * 20.0, fwd_eps * 25.0
@@ -148,7 +144,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     w_score = round(w_raw * (1.2 if c.iloc[-1] > 2000 else 1.0), 1)
     
     ret_5d, ret_15d = round(((c.iloc[-1]/c.iloc[-6])-1)*100, 2), round(((c.iloc[-1]/c.iloc[-16])-1)*100, 2)
-    total_score = round(float(p_score) + float(w_score) + (float(ret_5d) * 2.5) + float(theme_boost) + float(growth_boost), 1)
+    total_score = round(float(p_score) + float(w_score) + (float(ret_5d) * 2.5) + float(extra_boost) + float(growth_boost) + float(theme_boost), 1)
     
     risk = "⚪ 一般波動"
     if is_volume_dry and is_price_tight and ret_5d < 3: risk = "🟣 潛力突襲"
@@ -156,7 +152,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     elif "續攻" in pattern and ret_5d < 5: risk = "🔵 準備續攻"
     elif ret_15d > 35 or (ret_5d > 15 and ret_15d > 25): risk = "🔴 警戒避開"
     elif ret_15d <= 2 and "吞噬" in pattern: risk = "🟡 築底觀察"
-
+    
     ly_range = "N/A"
     try:
         ly = datetime.now().year - 1
@@ -166,16 +162,18 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
-# ====================== 3. UI 介面 (100% 原始) ======================
-st.set_page_config(page_title="戰情室 v9.2.4", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.2.4")
+# ====================== 3. UI 介面 ======================
+st.set_page_config(page_title="戰情室 v9.1.2", layout="wide")
+st.title("🏹 供應鏈戰情室 v9.1.2 (EPS 備援版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
 results = [] 
 
-try: conn = st.connection("gsheets", type=GSheetsConnection)
-except: conn = None
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except:
+    conn = None
 
 with st.sidebar:
     st.header("⚙️ 掃描設定")
@@ -191,7 +189,7 @@ with st.sidebar:
     - <font color='#ffffff'>**🟣 試單佈局 → 🟡 築底加碼 → 🟢 優先重倉 → 🔵 藍燈續攻 → ⚪ 波動觀望→ 🔴 紅燈收割**</font>
     - <font color='#28a745'>**🟢 綠燈 (優先關注)**</font>: 符合強勢形態且 15 日漲幅小，風險低。
     - <font color='#6f42c1'>**🟣 紫燈 (潛力突襲)**</font>: 成交量極縮+橫盤，變盤前夕。
-    - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回擋止跌、準備二次發動。
+    - <font color='#007bff'>**🔵 藍燈 (準備續攻)**</font>: 回檔止跌、準備二次發動。
     - <font color='#ffc107'>**🟡 黃燈 (築底觀察)**</font>: 15日漲幅近0%，剛現底部吞噬。
     - <font color='#dc3545'>**🔴 紅燈 (警戒避開)**</font>: 15日漲幅過高(>30%)，防追高。
     - <font color='#17a2b8'>**🔥 (動能突破)**</font> / <font color='#6f42c1'>**💰 (成長加分)**</font>
@@ -202,61 +200,76 @@ with st.sidebar:
     bottom_only = st.checkbox("僅顯示形態確立股", value=True)
     eps_threshold = st.slider("📈 EPS 成長門檻", 1.0, 5.0, 1.7, 0.1)
 
-if st.button("🚀 啟動 V9.2.4 全面掃描"):
+if st.button("🚀 啟動 V9.0 全面掃描"):
     raw_codes = chains[selected_chain].copy()
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
+    
     tw_tz = pytz.timezone('Asia/Taipei')
     current_time_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 
+    # 預先讀取 GSheets 資料作為備援
     gsheets_data = None
     if conn:
-        try: gsheets_data = conn.read(ttl="10m")
+        try:
+            gsheets_data = conn.read(ttl="10m")
         except: pass
 
-    with st.spinner('正在讀取市場數據...'):
+    with st.spinner('掃描中...'):
+        tickers_list = []
+        for c in raw_codes:
+            tickers_list.append(f"{c}.TW")
+            tickers_list.append(f"{c}.TWO")
+        
+        all_data = yf.download(tickers_list, period="90d", group_by='ticker', threads=True, progress=False)
+
         for code in raw_codes:
             try:
-                # 原始下載邏輯
-                t_obj = yf.Ticker(f"{code}.TW")
-                df = t_obj.history(period="90d")
-                if df.empty:
-                    t_obj = yf.Ticker(f"{code}.TWO")
-                    df = t_obj.history(period="90d")
+                df = all_data[f"{code}.TW"]
+                full_code_used = f"{code}.TW"
+                if df.empty or df['Close'].isnull().all():
+                    df = all_data[f"{code}.TWO"]
+                    full_code_used = f"{code}.TWO"
                 
-                # --- 救援邏輯：Yahoo 掃不出時改從鉅亨網補數據 ---
-                if df.empty:
-                    df = get_rescue_data(code)
+                if df.empty or df['Close'].isnull().all(): continue
+                df = df.dropna(subset=['Close'])
                 
-                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, (code in manual_codes), backtest_days, gsheets_data)
+                t_obj = yf.Ticker(full_code_used)
+
+                # 傳入 gsheets_data 作為備援
+                res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days, gsheets_data=gsheets_data)
+                if not res: continue
+                pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
-                if res:
-                    pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
-                    if code not in manual_codes:
-                        if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
-                        if w_score < min_whale and "潛力突襲" not in risk: continue
-                    
-                    results.append({
-                        "時間": current_time_str, "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
-                        "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total, "題材": theme,
-                        "連結": f"https://tw.stock.yahoo.com/quote/{code}", "評價": status, "預估 EPS": f_eps,
-                        "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
-                    })
-                time.sleep(0.5)
+                if code not in manual_codes:
+                    if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
+                    if w_score < min_whale and "潛力突襲" not in risk: continue
+                
+                results.append({
+                    "時間": current_time_str,
+                    "名稱": name_map.get(code, code), "代號": code, "現價": price, "風險": risk, "形態": pattern, 
+                    "吸籌力 🐋": w_score, "5日%": r5, "15日%": r15, "波段評分": total, "題材": theme,
+                    "連結": f"https://tw.stock.yahoo.com/quote/{code}", "評價": status, "預估 EPS": f_eps,
+                    "合理價": fair_range, "前一EPS": t_eps, "歷年區間": ly_range
+                })
             except: continue
 
-# ====================== 4. UI 顯示 (100% 原始) ======================
 if results:
     df_new = pd.DataFrame(results)
+    
     if conn:
         try:
             existing_df = conn.read(ttl=0) 
             if existing_df is not None and not existing_df.empty:
+                # 確保合併時不影響原有結構，僅更新最新紀錄
                 updated_df = pd.concat([existing_df, df_new], ignore_index=True)
                 updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
-            else: updated_df = df_new
+            else:
+                updated_df = df_new
             conn.update(data=updated_df)
-        except: pass
+            st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
+        except Exception as e:
+            st.warning(f"⚠️ 雲端同步失敗: {e}")
 
     df_res = df_new.sort_values("波段評分", ascending=False)
     top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
@@ -265,8 +278,9 @@ if results:
     for i, cat in enumerate(["🟣 潛力突襲", "🟡 築底觀察", "🟢 優先關注", "🔵 準備續攻", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
         with tabs[i]:
             display_df = df_res if cat == "全部" else df_res[df_res["風險"] == cat]
-            if display_df.empty: st.write(f"目前無 {cat} 標的。"); continue
-            
+            if display_df.empty:
+                st.write(f"目前無 {cat} 標的。"); continue
+
             if view_mode == "傳統表格 (橫式)":
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
             else:
@@ -296,13 +310,25 @@ if results:
                         with st.expander("🔍 財報與價值評估詳情"):
                             st.write(f"**合理區間:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
                             st.write(f"**前一年 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
+                            
                             st.divider()
                             st.markdown("### 🏹 實戰操作建議")
                             r_type = row['風險']
-                            if "🟢" in r_type: st.success("**進場：** 🏆 核心買點。建議佈局 **40-50%** 資金。")
-                            elif "🟣" in r_type: st.write("🔮 **進場：** 底部潛伏。建議小量試單 **10-15%** 資金。")
-                            elif "🔵" in r_type: st.info("**進場：** 回擋止跌。建議加碼或補票 **20-30%** 資金。")
-                            elif "🟡" in r_type: st.warning("**進場：** 築底期。建議分批建立基本持股 **15-20%**。")
-                            elif "🔴" in r_type: st.error("🛑 **注意：** 漲幅已過大，不宜開新倉。")
-                            else: st.write("⚪ **建議：** 趨勢不明，觀望為主。若有 🔥 標籤可考慮極短線小量參與")
+                            if "🟢" in r_type:
+                                st.success("**進場：** 🏆 核心買點。建議佈局 **40-50%** 資金。")
+                                st.info("**防守點：** 跳空缺口下緣 或 5日均線 (MA5)。")
+                            elif "🟣" in r_type:
+                                st.write("🔮 **進場：** 底部潛伏。建議小量試單 **10-15%** 資金。")
+                                st.info("**防守點：** 近 5 日盤整區最低點。")
+                            elif "🔵" in r_type:
+                                st.info("**進場：** 回檔二抽。建議加碼或補票 **20-30%** 資金。")
+                                st.info("**防守點：** 10日均線 (MA10) 支撐位。")
+                            elif "🟡" in r_type:
+                                st.warning("**進場：** 築底期。建議分批建立基本持股 **15-20%**。")
+                                st.info("**防守點：** 底部吞噬紅棒的開盤價位置。")
+                            elif "🔴" in r_type:
+                                st.error("🛑 **注意：** 漲幅已過大，建議獲利了結，**不宜開新倉**。")
+                            else:
+                                st.write("⚪ **建議：** 趨勢不明，觀望為主。若有 🔥 標籤可考慮極短線小量參與。")
+
 else: st.write("請啟動掃描。")
