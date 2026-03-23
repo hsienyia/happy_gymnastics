@@ -6,29 +6,6 @@ import requests
 from datetime import datetime
 import pytz  # 用於修正時區
 from streamlit_gsheets import GSheetsConnection
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
-
-# ====================== 0. 限流優化：建立 Session ======================
-def get_retrying_session():
-    session = requests.Session()
-    # 模擬真實瀏覽器，降低被限流機率
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-    })
-    retry = Retry(
-        total=3, # 最多重試3次
-        backoff_factor=1, # 重試間隔延遲
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["GET"]
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
-
-session = get_retrying_session()
 
 # ====================== 1. 股票名稱與供應鏈資料 ======================
 @st.cache_data(ttl=86400)
@@ -41,10 +18,11 @@ def get_reliable_name_map():
         "3035": "智原", "6643": "M31", "6462": "神盾", "6533": "晶心科",
         "2049": "上銀", "1590": "亞德客-KY", "2395": "研華", "6166": "橫河/凌華", "4576": "大銀微"
     }
-    # 使用帶有重試機率的 session
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     for u in ["2", "4"]:
         try:
-            res = session.get(f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={u}", timeout=15)
+            # 這裡的 requests 抓取公開資料表仍可用標準 requests
+            res = requests.get(f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={u}", headers=headers, timeout=15)
             res.encoding = 'big5'
             soup = BeautifulSoup(res.text, 'html.parser')
             for row in soup.find_all('tr'):
@@ -86,9 +64,9 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     theme_label, theme_boost = "", 0.0
     if is_manual: theme_label = "手動"; theme_boost = 10.0 
     
-    # 優化：ticker_obj 使用 session 抓取 info
     info = {}
     try:
+        # yfinance 內部會處理連線，不再傳入 session
         info = ticker_obj.info
     except:
         pass
@@ -175,15 +153,15 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     ly_range = "N/A"
     try:
         ly = datetime.now().year - 1
-        hly = ticker_obj.history(start=f"{ly}-01-01", end=f"{ly}-12-31")
+        hly = ticker_obj.history(period="1y") # 優化：直接用簡化 period
         if not hly.empty: ly_range = f"{round(hly['Low'].min(), 1)} - {round(hly['High'].max(), 1)}"
     except: pass
 
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
 # ====================== 3. UI 介面 ======================
-st.set_page_config(page_title="戰情室 v9.1.2 Optimized", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.1.2 (限流優化版)")
+st.set_page_config(page_title="戰情室 v9.1.2 Fixed", layout="wide")
+st.title("🏹 供應鏈戰情室 v9.1.2 (TLS 反爬修正版)")
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
@@ -233,14 +211,14 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
             gsheets_data = conn.read(ttl="10m")
         except: pass
 
-    with st.spinner('優化模式掃描中...'):
+    with st.spinner('新一代數據引擎掃描中...'):
         tickers_list = []
         for c in raw_codes:
             tickers_list.append(f"{c}.TW")
             tickers_list.append(f"{c}.TWO")
         
-        # 使用 Session 優化 yf.download
-        all_data = yf.download(tickers_list, period="90d", group_by='ticker', threads=True, progress=False, session=session)
+        # 修正：不傳入 session 參數，yfinance 會自動使用內建的 curl_cffi 處理 TLS 指紋
+        all_data = yf.download(tickers_list, period="90d", group_by='ticker', threads=True, progress=False)
 
         for code in raw_codes:
             try:
@@ -253,8 +231,7 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                 if df.empty or df['Close'].isnull().all(): continue
                 df = df.dropna(subset=['Close'])
                 
-                # 同樣注入 session 到 Ticker 物件
-                t_obj = yf.Ticker(full_code_used, session=session)
+                t_obj = yf.Ticker(full_code_used)
 
                 res = analyze_stock_full(t_obj, df, mode, eps_threshold, code, is_manual=(code in manual_codes), backtest_days=backtest_days, gsheets_data=gsheets_data)
                 if not res: continue
@@ -326,8 +303,8 @@ if results:
                         st.progress(min(max(int(row['波段評分']), 0)/400, 1.0), text=f"{row['波段評分']}")
                         
                         with st.expander("🔍 財報與價值評估詳情"):
-                            st.write(f"**合理區間:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
-                            st.write(f"**前一年 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
+                            st.write(f"**合理價:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
+                            st.write(f"**前一 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
                             
                             st.divider()
                             st.markdown("### 🏹 實戰操作建議")
