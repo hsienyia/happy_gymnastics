@@ -38,6 +38,7 @@ def get_supply_chain_db():
     base_chains = {
         "💎 核心標的總匯 (ALL)": [], 
         "🔥 CoWoS/先進封裝設備": ["6187", "3131", "3583", "3680", "1560", "2404", "6640", "6438", "3413"],
+        "📡 低軌衛星 (LEO)": ["2313", "3491", "2314", "6285", "3380", "6684", "8103", "3152", "6213", "2383"], # 新增衛星清單
         "📡 CPO 矽光子/光通訊": ["3363", "4979", "3081", "3450", "3163", "6451", "4908", "6442", "2345"],
         "🤖 機器人/具身智能": ["2359", "2049", "4576", "2395", "6166", "1590", "8358", "8033", "2365"],
         "❄️ GB200 散熱/水冷牆": ["3017", "3324", "3653", "2421", "3013", "3483", "6124"],
@@ -80,8 +81,12 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     try:
         industry = str(info.get('industry', '')).lower()
         summary = str(info.get('longBusinessSummary', '')).lower()
+        
+        # 題材識別邏輯更新
         if any(k in summary or k in industry for k in ['cowos', 'advanced packaging']):
             theme_label = "CoWoS/先進封裝"; theme_boost = 35.0
+        elif any(k in summary or k in industry for k in ['satellite', 'leo', 'starlink', 'ground station']):
+            theme_label = "低軌衛星 (LEO)"; theme_boost = 30.0 # 新增自動識別
         elif any(k in summary or k in industry for k in ['photonics', 'cpo', 'optical communication']):
             theme_label = "CPO 矽光子"; theme_boost = 30.0
         elif any(k in summary or k in industry for k in ['robot', 'automation', 'machinery']):
