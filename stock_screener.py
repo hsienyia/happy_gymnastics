@@ -285,8 +285,13 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
                 pattern, w_score, r5, r15, risk, total, price, f_eps, t_eps, fair_range, status, ly_range, theme = res
                 
                 if code not in manual_codes:
-                    if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: continue
-                    if w_score < min_whale and "潛力突襲" not in risk: continue
+                    if bottom_only and "趨勢追蹤" in pattern and "潛力突襲" not in risk: 
+                        continue
+                    
+                    # 修改點：如果風險是「🟢 優先關注」，則無視 min_whale 門檻直接放行
+                    if risk != "🟢 優先關注":
+                        if w_score < min_whale and "潛力突襲" not in risk: 
+                            continue
                 
                 results.append({
                     "時間": current_time_str,
