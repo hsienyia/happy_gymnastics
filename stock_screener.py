@@ -190,9 +190,20 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     
     ly_range = "N/A"
     try:
-        hly = ticker_obj.history(period="1y")
-        if not hly.empty: ly_range = f"{round(hly['Low'].min(), 1)} - {round(hly['High'].max(), 1)}"
-    except: pass
+        current_year = datetime.now(tw_tz).year
+        last_year = current_year - 1
+        start_date = f"{last_year}-01-01"
+        end_date = f"{last_year}-12-31"
+        
+        # 使用 yfinance 下載去年整年的數據
+        hly = ticker_obj.history(start=start_date, end=end_date)
+        
+        if not hly.empty:
+            ly_min = round(hly['Low'].min(), 1)
+            ly_max = round(hly['High'].max(), 1)
+            ly_range = f"{ly_min} - {ly_max}"
+    except Exception as e:
+        ly_range = f"資料擷取失敗"
 
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
