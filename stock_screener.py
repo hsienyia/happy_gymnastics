@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -304,129 +305,79 @@ if st.button("🚀 啟動 V9.0 全面掃描"):
             except: continue
 
 if results:
-    # 建立左右比例，左邊 3 (主顯示區), 右邊 1 (五日綠燈追蹤)
-    main_col, side_tracker = st.columns([3, 1])
+    df_new = pd.DataFrame(results)
+    
+    if conn:
+        try:
+            existing_df = conn.read(ttl=0) 
+            if existing_df is not None and not existing_df.empty:
+                updated_df = pd.concat([existing_df, df_new], ignore_index=True)
+                updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
+            else:
+                updated_df = df_new
+            conn.update(data=updated_df)
+            st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
+        except Exception as e:
+            st.warning(f"⚠️ 雲端同步失敗: {e}")
 
-    # --- 右側：五日綠燈追蹤欄 (Side Tracker) ---
-    with side_tracker:
-        st.subheader("📡 近5日綠燈追蹤")
-        if conn:
-            try:
-                # 1. 讀取資料並強制不使用快取以獲取最新狀態
-                history_df = conn.read(ttl=0) 
-                if history_df is not None and not history_df.empty:
-                    # 2. 強制轉換時間格式，處理可能的字串與日期混合問題
-                    history_df['時間'] = pd.to_datetime(history_df['時間'], errors='coerce')
-                    history_df = history_df.dropna(subset=['時間']) # 剔除無效時間
-                    
-                    # 3. 統一時區 (確保與 tw_tz 一致)
-                    if history_df['時間'].dt.tz is None:
-                        history_df['時間'] = history_df['時間'].dt.tz_localize('Asia/Taipei')
-                    
-                    # 4. 計算 5 天前（包含當天）
-                    five_days_ago = datetime.now(tw_tz) - pd.Timedelta(days=5)
-                    
-                    # 5. 篩選綠燈標的
-                    green_tracker = history_df[
-                        (history_df['時間'] >= five_days_ago) & 
-                        (history_df['風險'].str.contains("🟢", na=False))
-                    ].copy()
+    df_res = df_new.sort_values("波段評分", ascending=False)
+    top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
+    
+    tabs = st.tabs(["🟣 突襲", "🟡 築底", "🟢 優先", "🔵 續攻", "⚪ 一般", "🔴 警戒", "⭐ 全部"])
+    for i, cat in enumerate(["🟣 潛力突襲", "🟡 築底觀察", "🟢 優先關注", "🔵 準備續攻", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
+        with tabs[i]:
+            display_df = df_res if cat == "全部" else df_res[df_res["風險"] == cat]
+            if display_df.empty:
+                st.write(f"目前無 {cat} 標的。"); continue
 
-                    if not green_tracker.empty:
-                        # 6. 按時間排序並去重
-                        green_tracker = green_tracker.sort_values('時間', ascending=False).drop_duplicates('代號')
-                        for _, g_row in green_tracker.iterrows():
-                            with st.container(border=True):
-                                st.markdown(f"**{g_row['名稱']} ({g_row['代號']})**")
-                                st.caption(f"訊號日: {g_row['時間'].strftime('%m/%d %H:%M')}")
-                                st.write(f"當時價: `{g_row['現價']}`")
-                                st.link_button("🔎 查報價", g_row['連結'], key=f"track_{g_row['代號']}", use_container_width=True)
-                    else:
-                        st.info("近 5 日內 GSheets 無綠燈紀錄")
-                else:
-                    st.info("GSheets 暫無資料")
-            except Exception as e:
-                # 顯示具體錯誤以便排查，正式穩定後可改回 st.warning
-                st.error(f"讀取失敗: {str(e)}")
-        else:
-            st.warning("未偵測到 GSheets 連線")
-
-    # --- 左側：原有 UI 顯示區 (完全保留原字數) ---
-    with main_col:
-        df_new = pd.DataFrame(results)
-        
-        if conn:
-            try:
-                existing_df = conn.read(ttl=0) 
-                if existing_df is not None and not existing_df.empty:
-                    updated_df = pd.concat([existing_df, df_new], ignore_index=True)
-                    updated_df = updated_df.drop_duplicates(subset=['時間', '代號'], keep='last')
-                else:
-                    updated_df = df_new
-                conn.update(data=updated_df)
-                st.success(f"☁️ 雲端同步完成！目前紀錄筆數：{len(updated_df)}")
-            except Exception as e:
-                st.warning(f"⚠️ 雲端同步失敗: {e}")
-
-        df_res = df_new.sort_values("波段評分", ascending=False)
-        top_medals = {0: "🏆 冠軍", 1: "🥈 亞軍", 2: "🥉 季軍"}
-        
-        tabs = st.tabs(["🟣 突襲", "🟡 築底", "🟢 優先", "🔵 續攻", "⚪ 一般", "🔴 警戒", "⭐ 全部"])
-        for i, cat in enumerate(["🟣 潛力突襲", "🟡 築底觀察", "🟢 優先關注", "🔵 準備續攻", "⚪ 一般波動", "🔴 警戒避開", "全部"]):
-            with tabs[i]:
-                display_df = df_res if cat == "全部" else df_res[df_res["風險"] == cat]
-                if display_df.empty:
-                    st.write(f"目前無 {cat} 標的。"); continue
-
-                if view_mode == "傳統表格 (橫式)":
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
-                else:
-                    for idx, row in display_df.reset_index(drop=True).iterrows():
-                        medal = top_medals.get(idx, "") if cat == "全部" else ""
-                        theme_tag = f"【{row['題材']}】" if row['題材'] else ""
-                        with st.container(border=True):
-                            c1, c2 = st.columns([2, 1])
-                            c1.subheader(f"{row['風險'][:2]} {row['名稱']} ({row['代號']})")
-                            if medal: c1.caption(f"{medal} {theme_tag}")
-                            elif theme_tag: c1.caption(theme_tag)
-                            c2.link_button("📈 看圖表", row['連結'], use_container_width=True)
+            if view_mode == "傳統表格 (橫式)":
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+            else:
+                for idx, row in display_df.reset_index(drop=True).iterrows():
+                    medal = top_medals.get(idx, "") if cat == "全部" else ""
+                    theme_tag = f"【{row['題材']}】" if row['題材'] else ""
+                    with st.container(border=True):
+                        c1, c2 = st.columns([2, 1])
+                        c1.subheader(f"{row['風險'][:2]} {row['名稱']} ({row['代號']})")
+                        if medal: c1.caption(f"{medal} {theme_tag}")
+                        elif theme_tag: c1.caption(theme_tag)
+                        c2.link_button("📈 看圖表", row['連結'], use_container_width=True)
+                        
+                        col_l, col_r = st.columns(2)
+                        with col_l:
+                            st.write(f"**現價:** `{row['現價']}`")
+                            st.write(f"**吸籌力:** `{row['吸籌力 🐋']}`")
+                            st.markdown(f"**5日漲跌:** <font color='{'#ff4b4b' if row['5日%'] > 0 else '#28a745'}'>{row['5日%']}%</font>", unsafe_allow_html=True)
+                        with col_r:
+                            st.write(f"**評價:** `{row['評價']}`")
+                            st.write(f"**形態:** {row['形態']}")
+                            st.markdown(f"**15日漲跌:** <font color='{'#ff4b4b' if row['15日%'] > 0 else '#28a745'}'>{row['15日%']}%</font>", unsafe_allow_html=True)
+                        
+                        st.write(f"**波段綜合評分:**")
+                        st.progress(min(max(int(row['波段評分']), 0)/400, 1.0), text=f"{row['波段評分']}")
+                        
+                        with st.expander("🔍 財報與價值評估詳情"):
+                            st.write(f"**合理價:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
+                            st.write(f"**前一 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
                             
-                            col_l, col_r = st.columns(2)
-                            with col_l:
-                                st.write(f"**現價:** `{row['現價']}`")
-                                st.write(f"**吸籌力:** `{row['吸籌力 🐋']}`")
-                                st.markdown(f"**5日漲跌:** <font color='{'#ff4b4b' if row['5日%'] > 0 else '#28a745'}'>{row['5日%']}%</font>", unsafe_allow_html=True)
-                            with col_r:
-                                st.write(f"**評價:** `{row['評價']}`")
-                                st.write(f"**形態:** {row['形態']}")
-                                st.markdown(f"**15日漲跌:** <font color='{'#ff4b4b' if row['15日%'] > 0 else '#28a745'}'>{row['15日%']}%</font>", unsafe_allow_html=True)
-                            
-                            st.write(f"**波段綜合評分:**")
-                            st.progress(min(max(int(row['波段評分']), 0)/400, 1.0), text=f"{row['波段評分']}")
-                            
-                            with st.expander("🔍 財報與價值評估詳情"):
-                                st.write(f"**合理價:** {row['合理價']} | **預估 EPS:** {row['預估 EPS']}")
-                                st.write(f"**前一 EPS:** {row['前一EPS']} | **歷年區間:** {row['歷年區間']}")
-                                
-                                st.divider()
-                                st.markdown("### 🏹 實戰操作建議")
-                                r_type = row['風險']
-                                if "🟢" in r_type:
-                                    st.success("**進場：** 🏆 核心買點。建議佈局 **40-50%** 資金 (吸籌力太低要問ai，高價股 25 分、低價股 40 分是鐵律)。")
-                                    st.info("**防守點：** 跳空缺口下緣 或 5日均線 (MA5)。")
-                                elif "🟣" in r_type:
-                                    st.write("🔮 **進場：** 底部潛伏。建議小量試單 **10-15%** 資金。")
-                                    st.info("**防守點：** 近 5 日盤整區最低點。")
-                                elif "🔵" in r_type:
-                                    st.info("**進場：** 回檔二抽。建議加碼或補票 **20-30%** 資金。")
-                                    st.info("**防守點：** 10日均線 (MA10) 支撐位。")
-                                elif "🟡" in r_type:
-                                    st.warning("**進場：** 築底期。建議分批建立基本持股 **15-20%**。")
-                                    st.info("**防守點：** 底部吞噬紅棒的開盤價位置。")
-                                elif "🔴" in r_type:
-                                    st.error("🛑 **注意：** 漲幅已過大，建議獲利了結，**不宜開新倉**。")
-                                else:
-                                    st.write("⚪ **建議：** 趨勢不明，觀望為主。若有 🔥 標籤可考慮極短線小量參與。")
+                            st.divider()
+                            st.markdown("### 🏹 實戰操作建議")
+                            r_type = row['風險']
+                            if "🟢" in r_type:
+                                st.success("**進場：** 🏆 核心買點。建議佈局 **40-50%** 資金 (吸籌力太低要問ai，高價股 25 分、低價股 40 分是鐵律)。")
+                                st.info("**防守點：** 跳空缺口下緣 或 5日均線 (MA5)。")
+                            elif "🟣" in r_type:
+                                st.write("🔮 **進場：** 底部潛伏。建議小量試單 **10-15%** 資金。")
+                                st.info("**防守點：** 近 5 日盤整區最低點。")
+                            elif "🔵" in r_type:
+                                st.info("**進場：** 回檔二抽。建議加碼或補票 **20-30%** 資金。")
+                                st.info("**防守點：** 10日均線 (MA10) 支撐位。")
+                            elif "🟡" in r_type:
+                                st.warning("**進場：** 築底期。建議分批建立基本持股 **15-20%**。")
+                                st.info("**防守點：** 底部吞噬紅棒的開盤價位置。")
+                            elif "🔴" in r_type:
+                                st.error("🛑 **注意：** 漲幅已過大，建議獲利了結，**不宜開新倉**。")
+                            else:
+                                st.write("⚪ **建議：** 趨勢不明，觀望為主。若有 🔥 標籤可考慮極短線小量參與。")
 
-else: 
-    st.write("請啟動掃描。")
+else: st.write("請啟動掃描。")
