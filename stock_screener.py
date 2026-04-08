@@ -312,31 +312,42 @@ if results:
         st.subheader("📡 近5日綠燈追蹤")
         if conn:
             try:
-                # 讀取雲端紀錄進行過濾
-                history_df = conn.read(ttl="1m")
+                # 1. 讀取資料並強制不使用快取以獲取最新狀態
+                history_df = conn.read(ttl=0) 
                 if history_df is not None and not history_df.empty:
-                    history_df['時間'] = pd.to_datetime(history_df['時間'])
-                    # 修正時區比對，統一使用與 history_df 相同的時區
+                    # 2. 強制轉換時間格式，處理可能的字串與日期混合問題
+                    history_df['時間'] = pd.to_datetime(history_df['時間'], errors='coerce')
+                    history_df = history_df.dropna(subset=['時間']) # 剔除無效時間
+                    
+                    # 3. 統一時區 (確保與 tw_tz 一致)
+                    if history_df['時間'].dt.tz is None:
+                        history_df['時間'] = history_df['時間'].dt.tz_localize('Asia/Taipei')
+                    
+                    # 4. 計算 5 天前（包含當天）
                     five_days_ago = datetime.now(tw_tz) - pd.Timedelta(days=5)
                     
-                    # 篩選 5 天內且曾出現 🟢 優先關注 的標的
+                    # 5. 篩選綠燈標的
                     green_tracker = history_df[
                         (history_df['時間'] >= five_days_ago) & 
-                        (history_df['風險'] == "🟢 優先關注")
+                        (history_df['風險'].str.contains("🟢", na=False))
                     ].copy()
 
                     if not green_tracker.empty:
+                        # 6. 按時間排序並去重
                         green_tracker = green_tracker.sort_values('時間', ascending=False).drop_duplicates('代號')
                         for _, g_row in green_tracker.iterrows():
                             with st.container(border=True):
                                 st.markdown(f"**{g_row['名稱']} ({g_row['代號']})**")
-                                st.caption(f"訊號日: {g_row['時間'].strftime('%m/%d')}")
+                                st.caption(f"訊號日: {g_row['時間'].strftime('%m/%d %H:%M')}")
                                 st.write(f"當時價: `{g_row['現價']}`")
-                                st.link_button("🔎 查報價", g_row['連結'], use_container_width=True)
+                                st.link_button("🔎 查報價", g_row['連結'], key=f"track_{g_row['代號']}", use_container_width=True)
                     else:
-                        st.info("近 5 日無綠燈標的")
-            except:
-                st.warning("追蹤欄同步中...")
+                        st.info("近 5 日內 GSheets 無綠燈紀錄")
+                else:
+                    st.info("GSheets 暫無資料")
+            except Exception as e:
+                # 顯示具體錯誤以便排查，正式穩定後可改回 st.warning
+                st.error(f"讀取失敗: {str(e)}")
         else:
             st.warning("未偵測到 GSheets 連線")
 
