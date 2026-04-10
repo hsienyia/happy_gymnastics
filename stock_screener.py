@@ -227,7 +227,7 @@ def auto_reload_scheduler():
             {h: 10, m: 30},
             {h: 11, m: 0},
             {h: 12, m: 0},
-            {h: 16, m: 52}
+            {h: 17, m: 05}
         ];
 
         let nextReload = null;
@@ -297,7 +297,7 @@ with st.sidebar:
 tw_tz = pytz.timezone('Asia/Taipei')
 now_time = datetime.now(tw_tz)
 current_hm = now_time.strftime("%H:%M")
-target_times = ["09:30", "10:00", "10:30", "11:00", "12:00", "16:52"]
+target_times = ["09:30", "10:00", "10:30", "11:00", "12:00", "17:05"]
 
 trigger_scan = st.button("🚀 啟動 V9.0 全面掃描")
 
@@ -307,7 +307,11 @@ if any(current_hm == t or (now_time.minute == int(t.split(":")[1])+1 and now_tim
     st.info(f"⏰ 自動排程啟動中... 目前時間：{current_hm}")
 
 if trigger_scan:
-    raw_codes = chains[selected_chain].copy()
+    # 判斷如果是自動觸發(current_hm 在時刻表內)，就強制掃描所有標的
+    if any(current_hm == t for t in target_times):
+        raw_codes = chains["💎 核心標的總匯 (ALL)"].copy() 
+    else:
+        raw_codes = chains[selected_chain].copy()
     manual_codes = [c.strip() for c in custom_input.replace('，', ',').split(',') if c.strip().isdigit()] if custom_input else []
     raw_codes = list(set(raw_codes + manual_codes)) 
     
