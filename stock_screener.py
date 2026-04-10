@@ -227,6 +227,7 @@ def auto_reload_scheduler():
             {h: 10, m: 30},
             {h: 11, m: 0},
             {h: 12, m: 0},
+            {h: 16, m: 21},
             {h: 13, m: 10}
         ];
 
