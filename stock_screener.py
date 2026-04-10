@@ -174,8 +174,31 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     if value_status == "低估": pattern += "🎯"
     
     v_ratio = float(v.iloc[-1]) / ((v.rolling(5).mean().iloc[-1] + v.rolling(21).mean().iloc[-1]) / 2)
+    # ====================== 權值與高價股加分邏輯 ======================
+    # 定義核心權值股名單
+    weight_stocks = ["2330", "2317", "2454", "2308", "2303", "2881", "2882", "2886", "2891", "2412", "3711",
+    # 建議新增的電子/AI龍頭
+    "2382", "3231", "2357", "6669", "2395", "3008", "3045",
+    # 建議新增的傳產/航運/金融龍頭
+    "2603", "2002", "1301", "1303", "1216", "2884", "2892", "2912"]
+    
+    # 基礎權重計算
     w_raw = (v_ratio * 15.0) + ((float(c.iloc[-1])-float(l.iloc[-1]))/(float(h.iloc[-1])-float(l.iloc[-1]))*15.0 if (float(h.iloc[-1])-float(l.iloc[-1]))>0 else 7.0) + (10.0 if (ma5 > ma10 > ma20) else 0.0)
-    w_score = round(w_raw * (1.2 if c.iloc[-1] > 2000 else 1.0), 1)
+    
+    # [新增] 權值/高價加分項
+    bonus = 0
+    current_price = float(c.iloc[-1])
+    
+    if str(code) in weight_stocks:
+        bonus += 8.5  # 核心權值股加 8.5 分
+    elif current_price > 800:
+        bonus += 10.0 # 千金股加 10 分
+    elif current_price > 300:
+        bonus += 5.0  # 五百元以上高價股加 5 分
+
+    # 計算最終吸籌力
+    w_score = round(w_raw + bonus, 1)
+    # ==============================================================
     
     # 漲幅計算 (防呆處理)
     try:
@@ -213,7 +236,7 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
 
 # ====================== 3. UI 介面 ======================
 st.set_page_config(page_title="戰情室 v9.4.0 Final", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.4.0 (盤中數據修正版)")
+st.title("🏹 供應鏈戰情室 v9.4.0 (專業代操等級)")
 
 # ====================== 👇 從這裡開始貼 👇 ======================
 def auto_reload_scheduler():
