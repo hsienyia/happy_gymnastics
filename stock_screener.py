@@ -227,7 +227,6 @@ def auto_reload_scheduler():
             {h: 10, m: 30},
             {h: 11, m: 0},
             {h: 12, m: 0},
-            {h: 16, m: 36},
             {h: 13, m: 10}
         ];
 
@@ -298,7 +297,7 @@ with st.sidebar:
 tw_tz = pytz.timezone('Asia/Taipei')
 now_time = datetime.now(tw_tz)
 current_hm = now_time.strftime("%H:%M")
-target_times = ["09:30", "10:00", "10:30", "11:00", "12:00", "13:10", "16:36"]
+target_times = ["09:30", "10:00", "10:30", "11:00", "12:00", "13:10"]
 
 trigger_scan = st.button("🚀 啟動 V9.0 全面掃描")
 
