@@ -8,6 +8,8 @@ from datetime import datetime
 import pytz  # 用於修正時區
 from streamlit_gsheets import GSheetsConnection
 
+import streamlit.components.v1 as components
+
 # ====================== 1. 股票名稱與供應鏈資料 ======================
 @st.cache_data(ttl=86400)
 def get_reliable_name_map():
@@ -210,8 +212,53 @@ def analyze_stock_full(ticker_obj, df, mode, eps_threshold, code, is_manual=Fals
     return pattern, w_score, ret_5d, ret_15d, risk, total_score, round(c.iloc[-1], 2), round(fwd_eps, 2), round(trail_eps, 2), f"{round(fair_low,1)}-{round(fair_high,1)}", value_status, ly_range, theme_label
 
 # ====================== 3. UI 介面 ======================
-st.set_page_config(page_title="戰情室 v9.1.2 Final", layout="wide")
-st.title("🏹 供應鏈戰情室 v9.1.2 (盤中數據修正版)")
+st.set_page_config(page_title="戰情室 v9.4.0 Final", layout="wide")
+st.title("🏹 供應鏈戰情室 v9.4.0 (盤中數據修正版)")
+
+# ====================== 👇 從這裡開始貼 👇 ======================
+def auto_reload_scheduler():
+    js_code = """
+    <script>
+    function scheduleNextReload() {
+        const now = new Date();
+        const targetTimes = [
+            {h: 9, m: 30},
+            {h: 10, m: 0},
+            {h: 10, m: 30},
+            {h: 11, m: 0},
+            {h: 12, m: 0},
+            {h: 13, m: 10}
+        ];
+
+        let nextReload = null;
+
+        for (let target of targetTimes) {
+            let candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), target.h, target.m, 0, 0);
+            if (candidate > now) {
+                nextReload = candidate;
+                break;
+            }
+        }
+
+        if (!nextReload) {
+            nextReload = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, targetTimes[0].h, targetTimes[0].m, 0, 0);
+        }
+
+        const timeToWait = nextReload.getTime() - now.getTime();
+        
+        setTimeout(() => {
+            window.parent.location.reload();
+        }, timeToWait);
+    }
+    
+    scheduleNextReload();
+    </script>
+    """
+    components.html(js_code, height=0, width=0)
+
+# 啟動定時器
+auto_reload_scheduler()
+# ====================== 👆 貼到這裡為止 👆 ======================
 
 name_map = get_reliable_name_map()
 chains = get_supply_chain_db()
