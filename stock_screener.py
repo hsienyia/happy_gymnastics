@@ -10,7 +10,7 @@ from streamlit_gsheets import GSheetsConnection
 
 import streamlit.components.v1 as components
 
-# ====================== 1. 股票名稱與供應鏈資料 ======================
+# ====================== 1. 股票名稱與供應鏈資料 ====================== 
 @st.cache_data(ttl=86400)
 def get_reliable_name_map():
     backup_names = {
